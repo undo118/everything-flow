@@ -48,6 +48,7 @@ function ConnectorOverlay({ editor }) {
   const [preview, setPreview] = useState(null)
   const previewRef = useRef(null)
   const dotsRef = useRef([])
+  const updateRef = useRef(null)
 
   // Compute dot positions from parent node bounds (NOT port shapes)
   // This guarantees dots are always at exact edge midpoints
@@ -108,8 +109,17 @@ function ConnectorOverlay({ editor }) {
       }
       dotsRef.current = result
       setDots(result)
+      // Direct DOM sync for smooth drag tracking (bypasses React batching)
+      for (const dot of result) {
+        const el = document.querySelector(`[data-cod="${dot.portShapeId}"]`) 
+        if (el) {
+          el.style.left = (dot.sx - 7) + 'px'
+          el.style.top = (dot.sy - 7) + 'px'
+        }
+      }
     }
 
+    updateRef.current = update
     update()
     return editor.store.listen(update)
   }, [editor, hoveredShapeId, preview])
@@ -121,6 +131,7 @@ function ConnectorOverlay({ editor }) {
       // Mouse button is held (drag/resize) → don't update hover
       if (e.buttons > 0) {
         if (hoveredShapeId) setHoveredShapeId(null)
+        if (updateRef.current) updateRef.current()
         return
       }
       const allShapes = editor.store.allRecords().filter(r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort)
@@ -225,6 +236,7 @@ function ConnectorOverlay({ editor }) {
     <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9999 }}>
       {dots.map((dot, i) => (
         <div key={dot.portShapeId}
+          data-cod={dot.portShapeId}
           onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); startArrow(dot.portShapeId, dot.dotId) }}
           style={{
             position: 'absolute', left: dot.sx - 7, top: dot.sy - 7, width: 14, height: 14, borderRadius: '50%',

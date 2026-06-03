@@ -11,18 +11,6 @@ const DEFAULT_FIELDS = [
   { key: '状态', value: '待开始' },
 ]
 
-const PORT_SIZE = 12
-
-function PortDot() {
-  return (
-    <div style={{
-      width: 12, height: 12, borderRadius: '50%',
-      background: '#6c63ff', border: '2px solid #fff',
-      boxShadow: '0 1px 4px rgba(0,0,0,0.4)',
-    }} />
-  )
-}
-
 export class FlowNodeShapeUtil extends ShapeUtil {
   static type = 'flow-node'
 
@@ -88,13 +76,9 @@ export class FlowNodeShapeUtil extends ShapeUtil {
   component(shape) {
     const { w, h, markdown, fields: fieldsJson, isPort } = shape.props
 
-    // Port shape: tiny circle
+    // Port shape: invisible — only exists for arrow binding
     if (isPort) {
-      return (
-        <HTMLContainer style={{ width: w, height: h, overflow: 'visible' }}>
-          <PortDot />
-        </HTMLContainer>
-      )
+      return <HTMLContainer style={{ width: w, height: h }} />
     }
 
     // Normal node: card content

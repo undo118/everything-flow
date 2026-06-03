@@ -49,7 +49,8 @@ function ConnectorOverlay({ editor }) {
   const previewRef = useRef(null)
   const dotsRef = useRef([])
 
-  // Compute dot positions from port shapes
+  // Compute dot positions from parent node bounds (NOT port shapes)
+  // This guarantees dots are always at exact edge midpoints
   useEffect(() => {
     if (!editor) return
 
@@ -57,29 +58,53 @@ function ConnectorOverlay({ editor }) {
       const cam = editor.getCamera()
       const toScreen = (px, py) => ({ x: (px + cam.x) * cam.z, y: (py + cam.y) * cam.z })
       const allShapes = editor.store.allRecords().filter(r => r.typeName === 'shape')
+      const mainNodes = allShapes.filter(s => s.type === 'flow-node' && !s.props?.isPort)
       const ports = allShapes.filter(s => s.type === 'flow-node' && s.props?.isPort)
       const selectedIds = editor.getSelectedShapeIds()
-      const allNodeIds = allShapes.filter(s => s.type === 'flow-node' && !s.props?.isPort).map(s => s.id)
+      const allNodeIds = mainNodes.map(s => s.id)
 
       const visibleIds = new Set(selectedIds)
       if (hoveredShapeId) visibleIds.add(hoveredShapeId)
       if (preview) { for (const id of allNodeIds) visibleIds.add(id) }
 
-      const result = []
+      // Fix port child positions to edge midpoints (batch to avoid recursive listener)
+      const portFixes = []
       for (const port of ports) {
-        const parentId = port.parentId
-        if (!visibleIds.has(parentId)) continue
-        const bounds = editor.getShapePageBounds(port.id)
-        if (!bounds) continue
-        const scr = toScreen(bounds.x + bounds.w / 2, bounds.y + bounds.h / 2)
-        result.push({
-          shapeId: parentId,
-          portShapeId: port.id,
-          dotId: port.props.isPort,
-          sx: scr.x, sy: scr.y,
-          px: bounds.x + bounds.w / 2,
-          py: bounds.y + bounds.h / 2,
-        })
+        const parent = mainNodes.find(n => n.id === port.parentId)
+        if (!parent) continue
+        const [lx, ly] = { top: [0.5, 0], right: [1, 0.5], bottom: [0.5, 1], left: [0, 0.5] }[port.props.isPort] || [0.5, 0.5]
+        const expX = Math.round(parent.props.w * lx - 6)
+        const expY = Math.round(parent.props.h * ly - 6)
+        if (Math.abs(port.x - expX) > 1 || Math.abs(port.y - expY) > 1) {
+          portFixes.push({ id: port.id, type: 'flow-node', x: expX, y: expY })
+        }
+      }
+      if (portFixes.length > 0) {
+        editor.batch(() => portFixes.forEach(p => editor.updateShape(p)))
+        return // will re-enter with correct port positions
+      }
+      const result = []
+      for (const node of mainNodes) {
+        if (!visibleIds.has(node.id)) continue
+        const b = editor.getShapePageBounds(node.id)
+        if (!b) continue
+        const edges = [
+          { dotId: 'top', px: b.x + b.w / 2, py: b.y },
+          { dotId: 'right', px: b.x + b.w, py: b.y + b.h / 2 },
+          { dotId: 'bottom', px: b.x + b.w / 2, py: b.y + b.h },
+          { dotId: 'left', px: b.x, py: b.y + b.h / 2 },
+        ]
+        for (const e of edges) {
+          const port = ports.find(p => p.parentId === node.id && p.props?.isPort === e.dotId)
+          const scr = toScreen(e.px, e.py)
+          result.push({
+            shapeId: node.id,
+            portShapeId: port ? port.id : `vport-${node.id}-${e.dotId}`,
+            dotId: e.dotId,
+            sx: scr.x, sy: scr.y,
+            px: e.px, py: e.py,
+          })
+        }
       }
       dotsRef.current = result
       setDots(result)
@@ -89,24 +114,29 @@ function ConnectorOverlay({ editor }) {
     return editor.store.listen(update)
   }, [editor, hoveredShapeId, preview])
 
-  // Hover detection
+  // Hover detection — only updates hoveredShapeId, dots are handled by store listener
   useEffect(() => {
     if (!editor) return
-    const onMove = () => {
+    const onMove = (e) => {
+      // Mouse button is held (drag/resize) → don't update hover
+      if (e.buttons > 0) {
+        if (hoveredShapeId) setHoveredShapeId(null)
+        return
+      }
+      const allShapes = editor.store.allRecords().filter(r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort)
       const pt = editor.inputs.currentPagePoint
       if (!pt) return
-      const allShapes = editor.store.allRecords().filter(r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort)
       let nearest = null
       for (const s of allShapes) {
         const b = editor.getShapePageBounds(s.id)
         if (!b) continue
-        if (pt.x >= b.x - 30 && pt.x <= b.x + b.w + 30 && pt.y >= b.y - 30 && pt.y <= b.y + b.h + 30) { nearest = s.id; break }
+        if (pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h) { nearest = s.id; break }
       }
       setHoveredShapeId(nearest)
     }
     document.addEventListener('mousemove', onMove)
     return () => document.removeEventListener('mousemove', onMove)
-  }, [editor])
+  }, [editor, hoveredShapeId, preview])
 
   // Arrow creation: from port shape to port shape
   const startArrow = useCallback((portShapeId, dotId) => {

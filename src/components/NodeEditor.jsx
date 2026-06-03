@@ -16,6 +16,13 @@ export default function NodeEditor({ shape, editor, onClose }) {
   const [activeTab, setActiveTab] = useState('content')
 
   const handleSave = () => {
+    // 检查节点是否已被删除
+    const existing = editor.getShape(shape.id)
+    if (!existing) {
+      alert('节点已被删除，无法保存')
+      onClose()
+      return
+    }
     editor.updateShape({
       id: shape.id,
       type: 'flow-node',

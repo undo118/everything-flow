@@ -11,6 +11,8 @@ const DEFAULT_FIELDS = [
   { key: '状态', value: '待开始' },
 ]
 
+const PORT_SIZE = 12
+
 function PortDot() {
   return (
     <div style={{
@@ -42,8 +44,9 @@ export class FlowNodeShapeUtil extends ShapeUtil {
   }
 
   canEdit = () => false
-  canResize = () => false
-  hideResizeHandles = () => true
+  canResize = (shape) => !shape.props.isPort
+  hideResizeHandles = (shape) => !!shape.props.isPort
+  canSelect = (shape) => !shape.props.isPort
   isAspectRatioLocked = () => false
 
   // Ports are invisible to selection
@@ -53,6 +56,33 @@ export class FlowNodeShapeUtil extends ShapeUtil {
     if (shape.props.isPort) return
     const handler = window.__openFlowNodeEditor
     if (handler) handler(shape.id)
+  }
+
+  onResize = (shape, info) => {
+    if (shape.props.isPort) return shape
+    const { initialShape, scaleX, scaleY, handle } = info
+    const newW = Math.max(120, Math.round(initialShape.props.w * scaleX))
+    const newH = Math.max(60, Math.round(initialShape.props.h * scaleY))
+
+    // tldraw does NOT update shape.y for top/left handles on custom shapes
+    // We must fix position to keep opposite edges anchored
+    let newY = shape.y
+    let newX = shape.x
+    if (handle.includes('top')) {
+      const bottom = initialShape.y + initialShape.props.h
+      newY = bottom - newH
+    }
+    if (handle.includes('left')) {
+      const right = initialShape.x + initialShape.props.w
+      newX = right - newW
+    }
+
+    return {
+      ...shape,
+      x: newX,
+      y: newY,
+      props: { ...shape.props, w: newW, h: newH },
+    }
   }
 
   component(shape) {

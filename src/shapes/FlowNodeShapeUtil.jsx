@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { ShapeUtil, HTMLContainer, Rectangle2d, T } from 'tldraw'
 import { marked } from 'marked'
 
@@ -11,6 +11,57 @@ const DEFAULT_FIELDS = [
   { key: '状态', value: '待开始' },
 ]
 
+function ScrollableNodeContent({ w, h, html, visibleFields, scrollTop, shapeId }) {
+  const contentRef = useRef(null)
+  const [contentH, setContentH] = useState(0)
+
+  // Measure content natural height for scrollbar overlay
+  useEffect(() => {
+    if (!contentRef.current) return
+    const h = contentRef.current.scrollHeight
+    setContentH(h)
+    window.__nodeContentHeights = window.__nodeContentHeights || {}
+    window.__nodeContentHeights[shapeId] = h
+  }, [shapeId, html, visibleFields.length])
+
+  const maxScroll = Math.max(0, contentH - (h - 32))
+  const clampedScroll = Math.min(scrollTop || 0, maxScroll)
+
+  return (
+    <div style={{
+      width: w, height: h, padding: '16px 18px',
+      background: '#1e1e3a', borderRadius: 8, border: '1px solid #444',
+      color: '#e0e0e0', fontSize: 13, lineHeight: 1.7,
+      overflow: 'hidden',
+      fontFamily: 'system-ui, -apple-system, sans-serif', boxSizing: 'border-box', position: 'relative',
+    }}
+      onWheel={(e) => {
+        // Handle wheel for this node
+        const delta = e.deltaY
+        const nodeMax = Math.max(0, contentH - (h - 32))
+        const newScroll = Math.max(0, Math.min((scrollTop || 0) + delta, nodeMax))
+        if (window.__setNodeScrollTop) window.__setNodeScrollTop(shapeId, newScroll)
+        e.stopPropagation()
+      }}
+    >
+      <div ref={contentRef} style={{ transform: `translateY(${-clampedScroll}px)` }}>
+        <div className="flow-node-content" dangerouslySetInnerHTML={{ __html: html }}
+          style={{ marginBottom: visibleFields.length > 0 ? 12 : 0 }} />
+        {visibleFields.length > 0 && (
+          <div style={{ borderTop: '1px solid #333', paddingTop: 10, marginTop: 4 }}>
+            {visibleFields.map((f, i) => (
+              <div key={i} style={{ fontSize: 12, color: '#aaa', lineHeight: 1.8 }}>
+                <span style={{ color: '#888', marginRight: 4 }}>{f.key}</span>
+                <span style={{ color: '#ccc' }}>{f.value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export class FlowNodeShapeUtil extends ShapeUtil {
   static type = 'flow-node'
 
@@ -20,10 +71,11 @@ export class FlowNodeShapeUtil extends ShapeUtil {
     markdown: T.string,
     fields: T.string,
     isPort: T.string, // '' for normal nodes, 'top'/'right'/'bottom'/'left' for ports
+    scrollTop: T.number, // scroll position for overflow content
   }
 
   getDefaultProps() {
-    return { w: 300, h: 240, markdown: '# 新节点\n\n双击编辑内容', fields: JSON.stringify(DEFAULT_FIELDS), isPort: '' }
+    return { w: 300, h: 240, markdown: '# 新节点\n\n双击编辑内容', fields: JSON.stringify(DEFAULT_FIELDS), isPort: '', scrollTop: 0 }
   }
 
   getGeometry(shape) {
@@ -74,7 +126,7 @@ export class FlowNodeShapeUtil extends ShapeUtil {
   }
 
   component(shape) {
-    const { w, h, markdown, fields: fieldsJson, isPort } = shape.props
+    const { w, h, markdown, fields: fieldsJson, isPort, scrollTop } = shape.props
 
     // Port shape: invisible — only exists for arrow binding
     if (isPort) {
@@ -83,7 +135,7 @@ export class FlowNodeShapeUtil extends ShapeUtil {
 
     // Normal node: card content
     let html = ''
-    try { html = marked.parse(markdown) } catch { html = `<pre style="white-space:pre-wrap;color:#f87171">${markdown}</pre>` }
+    try { html = marked.parse(markdown) } catch { html = '<pre style="white-space:pre-wrap;color:#f87171">' + markdown + '</pre>' }
 
     let fields = []
     try { fields = JSON.parse(fieldsJson || '[]') } catch { fields = [] }
@@ -91,25 +143,7 @@ export class FlowNodeShapeUtil extends ShapeUtil {
 
     return (
       <HTMLContainer style={{ width: w, height: h }}>
-        <div style={{
-          width: w, height: h, padding: '16px 18px',
-          background: '#1e1e3a', borderRadius: 8, border: '1px solid #444',
-          color: '#e0e0e0', fontSize: 13, lineHeight: 1.7,
-          overflow: 'auto', fontFamily: 'system-ui, -apple-system, sans-serif', boxSizing: 'border-box',
-        }}>
-          <div className="flow-node-content" dangerouslySetInnerHTML={{ __html: html }}
-            style={{ marginBottom: visibleFields.length > 0 ? 12 : 0 }} />
-          {visibleFields.length > 0 && (
-            <div style={{ borderTop: '1px solid #333', paddingTop: 10, marginTop: 4 }}>
-              {visibleFields.map((f, i) => (
-                <div key={i} style={{ fontSize: 12, color: '#aaa', lineHeight: 1.8 }}>
-                  <span style={{ color: '#888', marginRight: 4 }}>{f.key}</span>
-                  <span style={{ color: '#ccc' }}>{f.value}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <ScrollableNodeContent w={w} h={h} html={html} visibleFields={visibleFields} scrollTop={scrollTop} shapeId={shape.id} />
       </HTMLContainer>
     )
   }

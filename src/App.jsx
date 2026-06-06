@@ -14,6 +14,124 @@ const customShapeUtils = [FlowNodeShapeUtil]
 
 const PORT_SIZE = 12
 
+// ---- Alignment engine (12 modes) ----
+function alignNodes(editor, mode) {
+  const selectedIds = editor.getSelectedShapeIds()
+  if (selectedIds.length < 2) return
+
+  // Get selected flow-node shapes
+  const nodes = selectedIds.map(id => editor.getShape(id)).filter(s => s && s.type === 'flow-node' && !s.props?.isPort)
+  if (nodes.length < 2) return
+
+  // Compute bounding box of selection
+  const bounds = nodes.map(n => {
+    const b = editor.getShapePageBounds(n.id)
+    return b ? { id: n.id, x: b.x, y: b.y, w: b.w, h: b.h, props: n.props } : null
+  }).filter(Boolean)
+
+  if (bounds.length < 2) return
+
+  const minX = Math.min(...bounds.map(b => b.x))
+  const minY = Math.min(...bounds.map(b => b.y))
+  const maxX = Math.max(...bounds.map(b => b.x + b.w))
+  const maxY = Math.max(...bounds.map(b => b.y + b.h))
+  const totalW = maxX - minX
+  const totalH = maxY - minY
+
+  // Sort by current position for distribute
+  const byX = [...bounds].sort((a, b) => a.x - b.x)
+  const byY = [...bounds].sort((a, b) => a.y - b.y)
+
+  const updates = []
+
+  for (const b of bounds) {
+    const upd = { id: b.id, type: 'flow-node' }
+
+    switch (mode) {
+      // ---- Horizontal align ----
+      case 'align-left':
+        upd.x = minX
+        break
+      case 'align-center-h':
+        upd.x = minX + (totalW - b.w) / 2
+        break
+      case 'align-right':
+        upd.x = maxX - b.w
+        break
+
+      // ---- Vertical align ----
+      case 'align-top':
+        upd.y = minY
+        break
+      case 'align-center-v':
+        upd.y = minY + (totalH - b.h) / 2
+        break
+      case 'align-bottom':
+        upd.y = maxY - b.h
+        break
+
+      // ---- Distribute ----
+      case 'distribute-h': {
+        // Already sorted by x; space evenly
+        const firstX = byX[0].x
+        const lastX = byX[byX.length - 1].x + byX[byX.length - 1].w
+        const totalNodesW = byX.reduce((sum, n) => sum + n.w, 0)
+        const gap = (lastX - firstX - totalNodesW) / (byX.length - 1)
+        let cx = firstX
+        for (const n of byX) {
+          if (n.id === b.id) { upd.x = cx; break }
+          cx += n.w + gap
+        }
+        break
+      }
+      case 'distribute-v': {
+        const firstY = byY[0].y
+        const lastY = byY[byY.length - 1].y + byY[byY.length - 1].h
+        const totalNodesH = byY.reduce((sum, n) => sum + n.h, 0)
+        const gap = (lastY - firstY - totalNodesH) / (byY.length - 1)
+        let cy = firstY
+        for (const n of byY) {
+          if (n.id === b.id) { upd.y = cy; break }
+          cy += n.h + gap
+        }
+        break
+      }
+
+      // ---- Size match ----
+      case 'same-width': {
+        const maxW = Math.max(...bounds.map(n => n.w))
+        upd.props = { ...b.props, w: maxW }
+        break
+      }
+      case 'same-height': {
+        const maxH = Math.max(...bounds.map(n => n.h))
+        upd.props = { ...b.props, h: maxH }
+        break
+      }
+      case 'same-size': {
+        const maxW = Math.max(...bounds.map(n => n.w))
+        const maxH = Math.max(...bounds.map(n => n.h))
+        upd.props = { ...b.props, w: maxW, h: maxH }
+        break
+      }
+
+      // ---- Center to page ----
+      case 'center-page': {
+        const vp = editor.getViewportPageBounds()
+        const selCenterX = minX + totalW / 2
+        const selCenterY = minY + totalH / 2
+        upd.x = b.x + (vp.center.x - selCenterX)
+        upd.y = b.y + (vp.center.y - selCenterY)
+        break
+      }
+    }
+
+    updates.push(upd)
+  }
+
+  editor.batch(() => updates.forEach(u => editor.updateShape(u)))
+}
+
 // Create a flow-node with 4 port children
 function createFlowNodeWithPorts(editor, x, y, w, h) {
   const nodeId = `shape:fnode-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
@@ -103,6 +221,12 @@ function ConnectorOverlay({ editor }) {
         type: 'flow-node',
         props: { scrollTop: clamped },
       })
+    }
+
+    // Expose connections for layout functions
+    window.__getPageConnections = () => {
+      const pageId = editor.getCurrentPageId()
+      return (connectionsRef.current[pageId] || [])
     }
 
     const update = () => {
@@ -459,6 +583,74 @@ function ScrollbarOverlay({ info, editor }) {
   )
 }
 
+// ---- Alignment popover (12 modes) ----
+const ALIGN_GROUPS = [
+  { label: '水平对齐', modes: [
+    { id: 'align-left', label: '左对齐', icon: '⬅' },
+    { id: 'align-center-h', label: '水平居中', icon: '⇔' },
+    { id: 'align-right', label: '右对齐', icon: '➡' },
+  ]},
+  { label: '垂直对齐', modes: [
+    { id: 'align-top', label: '顶部对齐', icon: '⬆' },
+    { id: 'align-center-v', label: '垂直居中', icon: '⇕' },
+    { id: 'align-bottom', label: '底部对齐', icon: '⬇' },
+  ]},
+  { label: '分布', modes: [
+    { id: 'distribute-h', label: '水平分布', icon: '⇌' },
+    { id: 'distribute-v', label: '垂直分布', icon: '⇋' },
+  ]},
+  { label: '等尺寸', modes: [
+    { id: 'same-width', label: '等宽', icon: '⬛' },
+    { id: 'same-height', label: '等高', icon: '▬' },
+    { id: 'same-size', label: '等大小', icon: '🔲' },
+  ]},
+  { label: '画布', modes: [
+    { id: 'center-page', label: '居中到画布', icon: '⊞' },
+  ]},
+]
+
+function AlignmentButtons({ editorRef, ready }) {
+  const [open, setOpen] = useState(false)
+  const panelRef = useRef(null)
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className="align-wrapper" ref={panelRef}>
+      <button onClick={() => setOpen(!open)} disabled={!ready} title="对齐工具" className="align-trigger">
+        ▦ 对齐
+      </button>
+      {open && (
+        <div className="align-panel">
+          {ALIGN_GROUPS.map(group => (
+            <div key={group.label} className="align-group">
+              <div className="align-group-label">{group.label}</div>
+              <div className="align-grid">
+                {group.modes.map(m => (
+                  <button key={m.id} className="align-btn"
+                    title={m.label}
+                    onClick={() => { alignNodes(editorRef.current, m.id); setOpen(false) }}>
+                    <span className="align-icon">{m.icon}</span>
+                    <span className="align-label">{m.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ---- Custom bottom toolbar ----
 const TOOLS = [
   { id: 'select', label: '选择', icon: '⬡' },
@@ -654,6 +846,9 @@ export default function App() {
         </div>
         <div className="toolbar-actions">
           <button onClick={addFlowNode} disabled={!ready}>➕ 添加节点</button>
+          <span className="toolbar-divider" />
+          <AlignmentButtons editorRef={editorRef} ready={ready} />
+          <span className="toolbar-divider" />
           <button onClick={handleLoad} disabled={!ready}>📂 加载</button>
           <button onClick={handleSave} disabled={!ready}>💾 保存</button>
         </div>

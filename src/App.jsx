@@ -42,6 +42,27 @@ function createFlowNodeWithPorts(editor, x, y, w, h) {
 
 // ---- Connector overlay (simplified: only visual dots) ----
 
+function dotIdToAnchor(dotId) {
+  switch (dotId) {
+    case 'top': return { x: 0.5, y: 0 }
+    case 'right': return { x: 1, y: 0.5 }
+    case 'bottom': return { x: 0.5, y: 1 }
+    case 'left': return { x: 0, y: 0.5 }
+    default: return { x: 0.5, y: 0.5 }
+  }
+}
+
+// Get the page-space point for a node's edge midpoint
+function getEdgePoint(bounds, dotId) {
+  switch (dotId) {
+    case 'top': return { x: bounds.x + bounds.w / 2, y: bounds.y }
+    case 'right': return { x: bounds.x + bounds.w, y: bounds.y + bounds.h / 2 }
+    case 'bottom': return { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h }
+    case 'left': return { x: bounds.x, y: bounds.y + bounds.h / 2 }
+    default: return { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 }
+  }
+}
+
 function ConnectorOverlay({ editor }) {
   const [dots, setDots] = useState([])
   const [hoveredShapeId, setHoveredShapeId] = useState(null)
@@ -49,6 +70,10 @@ function ConnectorOverlay({ editor }) {
   const previewRef = useRef(null)
   const dotsRef = useRef([])
   const updateRef = useRef(null)
+  const mouseScreenRef = useRef(null) // track cursor screen position during drag preview
+  const connectionsRef = useRef([]) // stored arrows: [{ sourceNodeId, sourceDotId, targetNodeId, targetDotId }]
+  const [arrowVisuals, setArrowVisuals] = useState([]) // screen-space arrow paths for rendering
+  const overlayRef = useRef(null) // ref to the overlay div for coordinate calculation
 
   // Compute dot positions from parent node bounds (NOT port shapes)
   // This guarantees dots are always at exact edge midpoints
@@ -82,7 +107,10 @@ function ConnectorOverlay({ editor }) {
       }
       if (portFixes.length > 0) {
         editor.batch(() => portFixes.forEach(p => editor.updateShape(p)))
-        return // will re-enter with correct port positions
+        // Continue to compute dots below — dots use parent bounds, not port positions,
+        // so they're correct even before the port-fix batch triggers a re-entry.
+        // Previously we returned early here, which caused flicker during resize:
+        // every other frame skipped dot rendering.
       }
       const result = []
       for (const node of mainNodes) {
@@ -109,7 +137,7 @@ function ConnectorOverlay({ editor }) {
       }
       dotsRef.current = result
       setDots(result)
-      // Direct DOM sync for smooth drag tracking (bypasses React batching)
+      // Direct DOM sync for smooth drag tracking
       for (const dot of result) {
         const el = document.querySelector(`[data-cod="${dot.portShapeId}"]`) 
         if (el) {
@@ -117,6 +145,19 @@ function ConnectorOverlay({ editor }) {
           el.style.top = (dot.sy - 7) + 'px'
         }
       }
+      // Compute arrow visuals from stored connections
+      const vis = []
+      for (const conn of connectionsRef.current) {
+        const sBounds = editor.getShapePageBounds(conn.sourceNodeId)
+        const tBounds = editor.getShapePageBounds(conn.targetNodeId)
+        if (!sBounds || !tBounds) continue
+        const sPt = getEdgePoint(sBounds, conn.sourceDotId)
+        const tPt = getEdgePoint(tBounds, conn.targetDotId)
+        const sScr = toScreen(sPt.x, sPt.y)
+        const tScr = toScreen(tPt.x, tPt.y)
+        vis.push({ key: conn.sourceNodeId + '-' + conn.sourceDotId + '-' + conn.targetNodeId + '-' + conn.targetDotId, x1: sScr.x, y1: sScr.y, x2: tScr.x, y2: tScr.y })
+      }
+      setArrowVisuals(vis)
     }
 
     updateRef.current = update
@@ -149,27 +190,13 @@ function ConnectorOverlay({ editor }) {
     return () => document.removeEventListener('mousemove', onMove)
   }, [editor, hoveredShapeId, preview])
 
-  // Arrow creation: from port shape to port shape
-  const startArrow = useCallback((portShapeId, dotId) => {
+  // Arrow creation: record the source dot for custom SVG preview
+  const startArrow = useCallback((dot) => {
     if (!editor) return
-    const portBounds = editor.getShapePageBounds(portShapeId)
-    if (!portBounds) return
-    const sx = portBounds.x + portBounds.w / 2
-    const sy = portBounds.y + portBounds.h / 2
-
-    const arrowId = `shape:arr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-    editor.createShape({
-      id: arrowId, type: 'arrow', x: sx, y: sy,
-      props: { start: { x: 0, y: 0 }, end: { x: 50, y: 50 }, text: '', color: 'grey', dash: 'dashed', size: 'm' },
-    })
-    // Bind to source port
-    editor.createBinding({
-      type: 'arrow', fromId: arrowId, toId: portShapeId,
-      props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: true, isPrecise: true },
-    })
-
-    setPreview({ arrowId, sourcePortId: portShapeId })
-    previewRef.current = { arrowId, startPos: { x: sx, y: sy } }
+    // No tldraw arrow shape created — we draw a custom SVG preview line.
+    // The connection is saved to connectionsRef on mouseup if a target is hit.
+    previewRef.current = dot
+    setPreview(dot)
   }, [editor])
 
   const findDot = useCallback((sx, sy, r = 15) => {
@@ -182,47 +209,62 @@ function ConnectorOverlay({ editor }) {
 
   useEffect(() => {
     if (!preview) return
-    let hoverDot = null
 
     const onMove = (ev) => {
-      const pt = editor.inputs.currentPagePoint
-      if (pt) {
-        const { arrowId, startPos } = previewRef.current || {}
-        if (arrowId) editor.updateShape({ id: arrowId, type: 'arrow', props: { end: { x: pt.x - startPos.x, y: pt.y - startPos.y } } })
-        hoverDot = findDot(ev.clientX, ev.clientY)
-        document.body.style.cursor = hoverDot ? 'copy' : 'crosshair'
-      }
+      const rect = overlayRef.current?.getBoundingClientRect()
+      const x = ev.clientX - (rect?.left || 0)
+      const y = ev.clientY - (rect?.top || 0)
+      mouseScreenRef.current = { x, y }
+      // Check if cursor is over a target dot for cursor change
+      const hoverDot = findDot(x, y)
+      document.body.style.cursor = hoverDot ? 'copy' : 'crosshair'
     }
+
     const onUp = (ev) => {
       document.body.style.cursor = ''
-      const { arrowId, startPos } = previewRef.current || {}
+      const sourceDot = previewRef.current
+      if (!sourceDot) { setPreview(null); return }
+
+      const rect = overlayRef.current?.getBoundingClientRect()
+      const cx = ev.clientX - (rect?.left || 0)
+      const cy = ev.clientY - (rect?.top || 0)
+
+      // Find target dot — use page-space proximity
       let target = null
       try {
-        const page = editor.screenToPage({ x: ev.clientX, y: ev.clientY })
-        if (page) {
+        const pt = editor.screenToPage({ x: ev.clientX, y: ev.clientY })
+        if (pt) {
           target = dotsRef.current.find(d => {
-            if (d.portShapeId === preview.sourcePortId) return false
-            const dx = page.x - d.px, dy = page.y - d.py
-            return dx * dx + dy * dy < 400
+            if (d.shapeId === sourceDot.shapeId && d.dotId === sourceDot.dotId) return false
+            const dx = pt.x - d.px, dy = pt.y - d.py
+            return dx * dx + dy * dy < 400 // within 20px
           })
         }
       } catch (e) {}
+
+      // Fallback: check screen-space proximity
       if (!target) {
-        target = findDot(ev.clientX, ev.clientY)
-        if (target && target.portShapeId === preview.sourcePortId) target = null
+        target = findDot(cx, cy)
+        if (target && target.shapeId === sourceDot.shapeId && target.dotId === sourceDot.dotId) target = null
       }
-      if (target && arrowId) {
-        editor.updateShape({ id: arrowId, type: 'arrow', props: { end: { x: target.px - startPos.x, y: target.py - startPos.y }, color: 'black', dash: 'draw', text: '' } })
-        editor.createBinding({
-          type: 'arrow', fromId: arrowId, toId: target.portShapeId,
-          props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: true, isPrecise: true },
-        })
-      } else if (arrowId) {
-        try { editor.deleteShape(arrowId) } catch (e) {}
+
+      if (target) {
+        // Save connection — arrows are rendered as custom SVG
+        connectionsRef.current = [...connectionsRef.current, {
+          sourceNodeId: sourceDot.shapeId,
+          sourceDotId: sourceDot.dotId,
+          targetNodeId: target.shapeId,
+          targetDotId: target.dotId,
+        }]
+        // Trigger arrow visual refresh
+        if (updateRef.current) updateRef.current()
       }
-      setPreview(null)
+
+      mouseScreenRef.current = null
       previewRef.current = null
+      setPreview(null)
     }
+
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
     return () => {
@@ -233,14 +275,30 @@ function ConnectorOverlay({ editor }) {
   }, [preview, editor, findDot])
 
   return (
-    <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9999 }}>
+    <div ref={overlayRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9999 }}>
+      {/* Saved arrows — custom SVG */}
+      <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'visible' }}>
+        <defs>
+          <marker id="arrowhead" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto">
+            <polygon points="4 2.5, 0 0, 0 5" fill="#6c63ff" />
+          </marker>
+        </defs>
+        {arrowVisuals.map(a => (
+          <line key={a.key} x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2} stroke="#6c63ff" strokeWidth={2.5} markerEnd="url(#arrowhead)" />
+        ))}
+        {/* Preview line during drag */}
+        {preview && mouseScreenRef.current && (
+          <line x1={preview.sx} y1={preview.sy} x2={mouseScreenRef.current.x} y2={mouseScreenRef.current.y}
+            stroke="#6c63ff" strokeWidth={2} strokeDasharray="6,3" markerEnd="url(#arrowhead)" opacity={0.7} />
+        )}
+      </svg>
       {dots.map((dot, i) => (
         <div key={dot.portShapeId}
           data-cod={dot.portShapeId}
-          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); startArrow(dot.portShapeId, dot.dotId) }}
+          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); startArrow(dot) }}
           style={{
             position: 'absolute', left: dot.sx - 7, top: dot.sy - 7, width: 14, height: 14, borderRadius: '50%',
-            background: preview && preview.sourcePortId === dot.portShapeId ? '#aaa' : '#6c63ff',
+            background: preview && preview.portShapeId === dot.portShapeId ? '#aaa' : '#6c63ff',
             border: '2px solid #fff', cursor: 'crosshair', pointerEvents: 'auto', zIndex: 10000,
             boxShadow: '0 1px 4px rgba(0,0,0,0.5)', transition: 'transform 0.1s, background 0.15s',
           }}

@@ -70,12 +70,13 @@ export class FlowNodeShapeUtil extends ShapeUtil {
     h: T.number,
     markdown: T.string,
     fields: T.string,
-    isPort: T.string, // '' for normal nodes, 'top'/'right'/'bottom'/'left' for ports
-    scrollTop: T.number, // scroll position for overflow content
+    isPort: T.string,
+    scrollTop: T.number,
+    locked: T.number,
   }
 
   getDefaultProps() {
-    return { w: 300, h: 240, markdown: '# 新节点\n\n双击编辑内容', fields: JSON.stringify(DEFAULT_FIELDS), isPort: '', scrollTop: 0 }
+    return { w: 300, h: 240, markdown: '# 新节点\n\n双击编辑内容', fields: JSON.stringify(DEFAULT_FIELDS), isPort: '', scrollTop: 0, locked: 0 }
   }
 
   getGeometry(shape) {
@@ -84,8 +85,8 @@ export class FlowNodeShapeUtil extends ShapeUtil {
   }
 
   canEdit = () => false
-  canResize = (shape) => !shape.props.isPort
-  hideResizeHandles = (shape) => !!shape.props.isPort
+  canResize = (shape) => !shape.props.isPort && !shape.props.locked
+  hideResizeHandles = (shape) => !!shape.props.isPort || !!shape.props.locked
   canSelect = (shape) => !shape.props.isPort
   isAspectRatioLocked = () => false
 
@@ -100,6 +101,7 @@ export class FlowNodeShapeUtil extends ShapeUtil {
 
   onResize = (shape, info) => {
     if (shape.props.isPort) return shape
+    if (shape.props.locked) return shape
     const { initialShape, scaleX, scaleY, handle } = info
     const newW = Math.max(120, Math.round(initialShape.props.w * scaleX))
     const newH = Math.max(60, Math.round(initialShape.props.h * scaleY))
@@ -125,6 +127,13 @@ export class FlowNodeShapeUtil extends ShapeUtil {
     }
   }
 
+  onTranslate = (initial, current) => {
+    if (initial.props.locked) {
+      // Locked shape: keep original position
+      return { ...current, x: initial.x, y: initial.y }
+    }
+  }
+
   component(shape) {
     const { w, h, markdown, fields: fieldsJson, isPort, scrollTop } = shape.props
 
@@ -143,6 +152,13 @@ export class FlowNodeShapeUtil extends ShapeUtil {
 
     return (
       <HTMLContainer style={{ width: w, height: h }}>
+        {!!shape.props.locked && (
+          <div style={{
+            position: 'absolute', top: 6, right: 8, zIndex: 10,
+            fontSize: 13, lineHeight: 1, color: '#888',
+            pointerEvents: 'none', userSelect: 'none',
+          }}>🔒</div>
+        )}
         <ScrollableNodeContent w={w} h={h} html={html} visibleFields={visibleFields} scrollTop={scrollTop} shapeId={shape.id} />
       </HTMLContainer>
     )

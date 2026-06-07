@@ -3,6 +3,9 @@ import { Tldraw, useEditor } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { FlowNodeShapeUtil } from './shapes/FlowNodeShapeUtil'
 import NodeEditor from './components/NodeEditor'
+import CustomMainMenu from './components/CustomMainMenu'
+import ActionsBridge from './components/ActionsBridge'
+import DialogBridge from './components/DialogBridge'
 
 let globalEditor = null
 
@@ -248,7 +251,7 @@ function ConnectorOverlay({ editor }) {
       const allShapes = editor.store.allRecords().filter(r => r.typeName === 'shape')
       // Only process shapes on the current page
       const shapesOnPage = allShapes.filter(s => isOnCurrentPage(editor, s, currentPageId))
-      const mainNodes = shapesOnPage.filter(s => s.type === 'flow-node' && !s.props?.isPort)
+      const mainNodes = shapesOnPage.filter(s => s.type === 'flow-node' && !s.props?.isPort && !s.props?.locked)
       const ports = shapesOnPage.filter(s => s.type === 'flow-node' && s.props?.isPort)
       const selectedIds = editor.getSelectedShapeIds()
       const allNodeIds = mainNodes.map(s => s.id)
@@ -371,7 +374,7 @@ function ConnectorOverlay({ editor }) {
         return
       }
       const currentPageId = editor.getCurrentPageId()
-      const allShapes = editor.store.allRecords().filter(r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort)
+      const allShapes = editor.store.allRecords().filter(r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort && !r.props?.locked)
       const shapesOnPage = allShapes.filter(s => isOnCurrentPage(editor, s, currentPageId))
       const pt = editor.inputs.currentPagePoint
       if (!pt) return
@@ -770,6 +773,19 @@ export default function App() {
     return () => { delete window.__openFlowNodeEditor }
   }, [])
 
+  // Watch focus mode → toggle CSS class for minimal UI
+  useEffect(() => {
+    if (!editor) return
+    const applyFocusClass = () => {
+      const app = document.querySelector('.app')
+      if (!app) return
+      const isFocus = editor.getInstanceState().isFocusMode
+      app.classList.toggle('focus-mode', isFocus)
+    }
+    applyFocusClass()
+    return editor.store.listen(applyFocusClass)
+  }, [editor])
+
   // Right-click pan
   useEffect(() => {
     const container = document.querySelector('.canvas-container')
@@ -841,6 +857,7 @@ export default function App() {
     <div className="app">
       <header className="toolbar">
         <div className="toolbar-left">
+          <CustomMainMenu />
           <h1>Everything Flow</h1>
           <span className="toolbar-tagline">协作流程图工具</span>
         </div>
@@ -855,7 +872,10 @@ export default function App() {
       </header>
       <div className="canvas-container">
         <Tldraw onMount={handleMount} shapeUtils={customShapeUtils} theme="dark"
-          components={{ Toolbar: null }} />
+          components={{ Toolbar: null, MainMenu: null, PageMenu: null, MenuPanel: null }}>
+          <ActionsBridge />
+          <DialogBridge />
+        </Tldraw>
         {editor && <ConnectorOverlay editor={editor} />}
         {editor && <CustomToolbar editor={editor} />}
       </div>

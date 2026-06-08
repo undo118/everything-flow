@@ -8,6 +8,9 @@
 
 ## 🐛 Bug
 
+- [x] ~~**快捷键面板被节点连接点遮挡** 🔴 ★☆☆☆☆
+  键盘快捷键对话框（tldraw 原生）z-index 低于 ConnectorOverlay(10000)，已修复：CSS 覆盖 `.tlui-dialog__overlay` → z-index: 10010~~
+
 - [x] ~~**节点缩小后出现无效滚动条** 🔴 ★★☆☆☆
   `overflow: auto` 导致节点缩小时出现滚动条，但 tldraw 接管事件导致滚动条不可用，改为 overlay 层自定义滚动条（通过 ConnectorOverlay，zIndex 10001）~~
 
@@ -16,12 +19,12 @@
 
 ---
 
-## P0 — 当前批次
+## P0 — ✅ 已完成
 
-- [ ] **重做左上角面板** 🔴 ★★★★☆
+- [x] ~~**重做左上角面板** 🔴 ★★★★☆~~ ✅
   1:1 复刻 tldraw 左上角所有功能（MainMenu/PageMenu/MenuPanel），逐项验收后隐藏原生组件。
-  Plan: `plans/pending/redesign-top-left-panel.md`
-  - [ ] Phase 0 — 截取当前 UI 参考图
+  Plan: `plans/approved/redesign-top-left-panel.md`
+  - [x] Phase 0 — 截取当前 UI 参考图
   - [x] ~~Phase 1 — 汉堡菜单外壳（CustomMainMenu 骨架）~~ ✅
   - [x] ~~Phase 2.1 — 剪贴板组（剪切/复制/粘贴）~~ ✅
   - [x] ~~Phase 2.2 — 选择与编组（全选/编组/取消编组）~~ ✅
@@ -30,12 +33,12 @@
   - [x] ~~Phase 4.1 — 偏好开关（参考线/网格/隐藏菜单/边缘滚动/粘贴到光标/调试模式）~~ ✅
   - [x] ~~Phase 4.2 — 主题选择（浅色/深色/跟随系统）~~ ✅
   - [ ] Phase 4.3 — 语言选择（下拉列表）🔄 推迟：需要实现 i18n 翻译系统，让自定义菜单/工具栏跟随语言切换
-  - [ ] Phase 5 — 帮助组（快捷键面板 + 文档链接）
-  - [ ] Phase 6 — 页面管理（CustomPageSelector / hover 操作 / 删除警告）
-  - [ ] Phase 7 — Undo/Redo 提取到顶部栏
-  - [ ] Phase 8 — 💾 按钮改为导出下拉菜单（保存.json + SVG/PNG/JSON 导出 + 透明背景）
-  - [ ] Phase 9 — 布局重排（整合所有组件到 toolbar）
-  - [ ] Phase 10 — 最终收尾（隐藏原生组件 + 暗色主题统一 + 最终验收）
+  - [x] ~~Phase 5 — 帮助组（快捷键面板 + 文档链接）~~ ✅
+  - [x] ~~Phase 6 — 页面管理（CustomPageSelector）~~ ✅
+  - [x] ~~Phase 7 — Undo/Redo 提取到顶部栏~~ ✅
+  - [x] ~~Phase 8 — 💾 按钮改为导出下拉菜单~~ ✅
+  - [ ] ~~Phase 9 — 布局重排~~ 🗑 跳过
+  - [ ] ~~Phase 10 — 最终收尾~~ 🗑 跳过
 
 ---
 
@@ -59,8 +62,8 @@
 - [x] ~~**重新设计底部工具栏** 🟠 ★★☆☆☆
   隐藏 tldraw 默认工具栏，替换为自定义工具栏，仅保留：选择、手型、便签、图片、激光笔 5 个工具~~
 
-- [ ] **重做左上角面板** 🟠 ★★☆☆☆
-  重新设计左上角区域，替换 tldraw 默认菜单/页面管理
+- [x] ~~**重做左上角面板** 🟠 ★★☆☆☆
+  重新设计左上角区域，替换 tldraw 默认菜单/页面管理~~
 
 - [ ] **重新设计右上角调色盘** 🟠 ★★☆☆☆
   - [ ] 隐藏 tldraw 默认样式面板
@@ -109,11 +112,6 @@
   - [ ] 工具栏设置入口 UI
   - [ ] 新建节点时应用默认配置
 
-- [ ] **更改背景样式** 🟢 ★☆☆☆☆
-  - [ ] 网格背景
-  - [ ] 点阵背景
-  - [ ] 纯色背景
-
 ---
 
 ## P3 — 增强功能
@@ -124,12 +122,11 @@
   - [ ] 粘贴上传
   - [ ] 图片内嵌渲染 / 仅显示引用链接
 
-- [ ] **新建节点防重叠** 🟢 ★★☆☆☆
-  - [ ] 检测默认位置是否与已有节点重合
-  - [ ] 自动往右下偏移
-
 ---
 
 ## P4 — 工程整洁
 
 - [x] ~~删除备份文件 `src/App.jsx.bak.v0.1`~~
+- [ ] **源码结构整理** 🟢 ★★☆☆☆
+  - [ ] Bridges 移入 `src/bridges/`（ActionsBridge, DialogBridge）
+  - [ ] App.jsx 拆分：ConnectorOverlay, CustomToolbar, AlignmentButtons 提为独立组件

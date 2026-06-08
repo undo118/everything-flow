@@ -4,6 +4,9 @@ import 'tldraw/tldraw.css'
 import { FlowNodeShapeUtil } from './shapes/FlowNodeShapeUtil'
 import NodeEditor from './components/NodeEditor'
 import CustomMainMenu from './components/CustomMainMenu'
+import CustomPageSelector from './components/CustomPageSelector'
+import UndoRedo from './components/UndoRedo'
+import SaveExportMenu from './components/SaveExportMenu'
 import ActionsBridge from './components/ActionsBridge'
 import DialogBridge from './components/DialogBridge'
 
@@ -858,6 +861,8 @@ export default function App() {
       <header className="toolbar">
         <div className="toolbar-left">
           <CustomMainMenu />
+          <UndoRedo ready={ready} />
+          <CustomPageSelector ready={ready} />
           <h1>Everything Flow</h1>
           <span className="toolbar-tagline">协作流程图工具</span>
         </div>
@@ -867,7 +872,7 @@ export default function App() {
           <AlignmentButtons editorRef={editorRef} ready={ready} />
           <span className="toolbar-divider" />
           <button onClick={handleLoad} disabled={!ready}>📂 加载</button>
-          <button onClick={handleSave} disabled={!ready}>💾 保存</button>
+          <SaveExportMenu ready={ready} />
         </div>
       </header>
       <div className="canvas-container">

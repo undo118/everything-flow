@@ -187,6 +187,347 @@ body {
   white-space: nowrap;
 }
 
+/* ---- Undo/Redo ---- */
+
+.undo-redo-group {
+  display: flex;
+  gap: 2px;
+}
+
+.undo-redo-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #aaa;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s;
+  line-height: 1;
+}
+
+.undo-redo-btn:hover:not(:disabled) {
+  background: #2a2a4a;
+  color: #e0e0e0;
+}
+
+.undo-redo-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ---- Save / Export Menu ---- */
+
+.save-export-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.save-export-btn {
+  padding: 6px 14px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: #2a2a4a;
+  color: #e0e0e0;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s, opacity 0.15s;
+}
+}
+
+.save-export-btn:hover:not(:disabled) {
+  background: #3a3a5a;
+}
+
+.save-export-btn.active {
+  background: #3a3a5a;
+  border-color: #6c63ff;
+}
+
+.save-export-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.save-export-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  background: #1e1e3a;
+  border: 1px solid #444;
+  border-radius: 10px;
+  padding: 4px 0;
+  z-index: 10002;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  min-width: 180px;
+}
+
+.save-export-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  color: #ccc;
+  cursor: pointer;
+  transition: background 0.1s;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.save-export-item:hover {
+  background: #2a2a4a;
+  color: #e0e0e0;
+}
+
+.save-export-icon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.save-export-label {
+  flex: 1;
+}
+
+.save-export-check {
+  font-size: 12px;
+  color: #6c63ff;
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+.save-export-separator {
+  height: 1px;
+  background: #333;
+  margin: 4px 10px;
+}
+
+/* ---- Custom Page Selector ---- */
+
+.page-selector-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.page-selector-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: #2a2a4a;
+  color: #e0e0e0;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.12s;
+  line-height: 1;
+}
+
+.page-selector-btn:hover {
+  background: #3a3a5a;
+}
+
+.page-selector-btn.active {
+  background: #3a3a5a;
+  border-color: #6c63ff;
+}
+
+.page-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.page-current-name {
+  width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-chevron {
+  font-size: 8px;
+  color: #888;
+}
+
+.page-selector-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  background: #1e1e3a;
+  border: 1px solid #444;
+  border-radius: 10px;
+  padding: 4px 0;
+  z-index: 10002;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  min-width: 280px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.page-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 6px 4px;
+  font-size: 13px;
+  color: #ccc;
+  cursor: default;
+  transition: background 0.1s;
+  user-select: none;
+}
+
+.page-item:hover,
+.page-item.current {
+  background: #2a2a4a;
+  color: #e0e0e0;
+}
+
+.page-item.drag-over {
+  background: #2a3a5a;
+  outline: 1px dashed #6c63ff;
+  outline-offset: -1px;
+}
+
+/* Drag handle */
+.page-drag-handle {
+  flex-shrink: 0;
+  width: 20px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: #555;
+  font-size: 14px;
+  letter-spacing: -1px;
+  line-height: 1;
+  margin-right: 2px;
+  transition: color 0.12s;
+}
+
+.page-drag-handle:hover {
+  color: #999;
+}
+
+.page-drag-handle:active {
+  cursor: grabbing;
+  color: #6c63ff;
+}
+
+.page-item-name {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.page-name-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-current-badge {
+  font-size: 10px;
+  color: #6c63ff;
+  background: rgba(108, 99, 255, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.page-rename-input {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid #6c63ff;
+  border-radius: 4px;
+  background: #2a2a4a;
+  color: #e0e0e0;
+  font-size: 13px;
+  outline: none;
+}
+
+.page-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.page-action-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+  line-height: 1;
+  padding: 0;
+}
+
+.page-action-btn:hover:not(:disabled) {
+  background: #3a3a5a;
+  color: #e0e0e0;
+}
+
+.page-action-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.page-action-delete:hover:not(:disabled) {
+  color: #f87171;
+}
+
+.page-shape-count {
+  font-size: 11px;
+  color: #666;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.page-add-btn {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #6c63ff;
+  cursor: pointer;
+  border-top: 1px solid #333;
+  margin-top: 2px;
+  transition: background 0.1s;
+  user-select: none;
+}
+
+.page-add-btn:hover {
+  background: #2a2a4a;
+}
+
+.page-add-btn.disabled {
+  color: #666;
+  cursor: default;
+}
+
+.page-add-btn.disabled:hover {
+  background: transparent;
+}
+
 /* ---- Custom Main Menu ---- */
 
 .main-menu-wrapper {
@@ -355,6 +696,11 @@ body {
   flex: 1;
   overflow: hidden;
   position: relative;
+}
+
+/* ---- tldraw dialog overlay fix: render above ConnectorOverlay (zIndex 9999) and dots (zIndex 10000) ---- */
+.tlui-dialog__overlay {
+  z-index: 10010 !important;
 }
 
 /* ---- Error Boundary ---- */

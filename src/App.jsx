@@ -638,7 +638,7 @@ function ConnectorOverlay({ editor }) {
                 let closest = null, minDist = Infinity
                 for (const tVal of targets) {
                   const dist = Math.abs(tVal - handleVal)
-                  if (dist < minDist && dist < 12) {
+                  if (dist < minDist && dist < 4) {
                     minDist = dist; closest = tVal
                   }
                 }
@@ -766,11 +766,12 @@ function ConnectorOverlay({ editor }) {
           if (updateRef.current) updateRef.current()
         }
         setSelectedArrowKey(null)
+        e.stopPropagation()
         e.preventDefault()
       }
     }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
   }, [selectedArrowKey, editor])
 
   return (
@@ -1252,12 +1253,17 @@ export default function App() {
           <button onClick={() => {
             const pageId = editorRef.current?.getCurrentPageId()
             const conns = window.__getPageConnections?.() || []
-            conns.forEach(c => { c.mode = 'orthogonal'; window.__resetArrowOffsets?.(c.sourceNodeId + '-' + c.sourceDotId + '-' + c.targetNodeId + '-' + c.targetDotId) })
+            conns.forEach(c => {
+              if (c.mode !== 'orthogonal') {
+                c.mode = 'orthogonal'
+                window.__resetArrowOffsets?.(c.sourceNodeId + '-' + c.sourceDotId + '-' + c.targetNodeId + '-' + c.targetDotId)
+              }
+            })
             window.__triggerArrowUpdate?.()
           }} disabled={!ready} title="全部箭头改为正交">全部正交</button>
           <button onClick={() => {
             const conns = window.__getPageConnections?.() || []
-            conns.forEach(c => { c.mode = 'straight' })
+            conns.forEach(c => { if (c.mode !== 'straight') c.mode = 'straight' })
             window.__triggerArrowUpdate?.()
           }} disabled={!ready} title="全部箭头改为直线">全部直线</button>
           <span className="toolbar-divider" />

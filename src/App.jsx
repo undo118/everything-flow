@@ -651,6 +651,7 @@ function ConnectorOverlay({ editor }) {
         draggingHandleRef.current = null
         document.body.style.cursor = ''
       }
+      setSnapGuides([])
       lastClientY = 0
       lastClientX = 0
     }
@@ -750,6 +751,18 @@ function ConnectorOverlay({ editor }) {
           <line x1={preview.sx} y1={preview.sy} x2={mouseScreenRef.current.x} y2={mouseScreenRef.current.y}
             stroke="#6c63ff" strokeWidth={2} strokeDasharray="6,3" markerEnd="url(#arrowhead)" opacity={0.7} />
         )}
+        {/* Snap guide lines */}
+        {snapGuides.map((g, i) => {
+          const cam = cameraRef.current
+          if (g.axis === 'y') {
+            const sy = (g.value + cam.y) * cam.z
+            return <line key={'sg' + i} x1={0} y1={sy} x2={20000} y2={sy}
+              stroke="#ff8844" strokeWidth={1} strokeDasharray="4,4" opacity={0.7} pointerEvents="none" />
+          }
+          const sx = (g.value + cam.x) * cam.z
+          return <line key={'sg' + i} x1={sx} y1={0} x2={sx} y2={20000}
+            stroke="#ff8844" strokeWidth={1} strokeDasharray="4,4" opacity={0.7} pointerEvents="none" />
+        })}
       </svg>
       {dots.map((dot, i) => (
         <div key={dot.portShapeId}

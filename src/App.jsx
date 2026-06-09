@@ -9,6 +9,7 @@ import UndoRedo from './components/UndoRedo'
 import SaveExportMenu from './components/SaveExportMenu'
 import ActionsBridge from './components/ActionsBridge'
 import DialogBridge from './components/DialogBridge'
+import { orthogonalRoute } from './utils/orthogonalRouting'
 
 let globalEditor = null
 
@@ -210,6 +211,12 @@ function ConnectorOverlay({ editor }) {
   const [arrowVisuals, setArrowVisuals] = useState([]) // screen-space arrow paths for rendering
   const overlayRef = useRef(null) // ref to the overlay div for coordinate calculation
   const [scrollbarInfo, setScrollbarInfo] = useState(null) // { shapeId, sx, sy, sw, sh, maxScroll, scrollTop }
+  const handleOffsetsRef = useRef({})      // { [connKey]: { h2, h3, h4 } }
+  const cameraRef = useRef({ x: 0, y: 0, z: 1 })
+  const draggingHandleRef = useRef(null)    // { connKey, offKey } during drag
+  const [selectedArrowKey, setSelectedArrowKey] = useState(null)
+  const nodePositionsRef = useRef({}) // { [nodeId]: { x, y } } for detecting node movement
+  const [snapGuides, setSnapGuides] = useState([]) // { axis: 'x'|'y', value: number }[]
 
   // Compute dot positions from parent node bounds (NOT port shapes)
   // This guarantees dots are always at exact edge midpoints
@@ -217,6 +224,9 @@ function ConnectorOverlay({ editor }) {
     if (!editor) return
 
     // Register global scroll setter (called from shape wheel handler)
+    window.__HANDLE_SENSITIVITY = 0.4
+    const savedMode = localStorage.getItem('eflow-default-arrow-mode')
+    window.__DEFAULT_ARROW_MODE = savedMode || 'orthogonal'
     window.__setNodeScrollTop = (shapeId, newScrollTop) => {
       const shape = editor.getShape(shapeId)
       if (!shape) return
@@ -237,6 +247,7 @@ function ConnectorOverlay({ editor }) {
 
     const update = () => {
       const cam = editor.getCamera()
+      cameraRef.current = cam
       const toScreen = (px, py) => ({ x: (px + cam.x) * cam.z, y: (py + cam.y) * cam.z })
       
       // ---- Page isolation: scope shapes and connections to current page ----
@@ -315,17 +326,81 @@ function ConnectorOverlay({ editor }) {
           el.style.top = (dot.sy - 7) + 'px'
         }
       }
-      // Compute arrow visuals from stored connections (page-scoped)
+      // Compute orthogonal arrow paths from stored connections (page-scoped)
       const vis = []
       for (const conn of pageConnections) {
         const sBounds = editor.getShapePageBounds(conn.sourceNodeId)
         const tBounds = editor.getShapePageBounds(conn.targetNodeId)
         if (!sBounds || !tBounds) continue
-        const sPt = getEdgePoint(sBounds, conn.sourceDotId)
-        const tPt = getEdgePoint(tBounds, conn.targetDotId)
-        const sScr = toScreen(sPt.x, sPt.y)
-        const tScr = toScreen(tPt.x, tPt.y)
-        vis.push({ key: conn.sourceNodeId + '-' + conn.sourceDotId + '-' + conn.targetNodeId + '-' + conn.targetDotId, x1: sScr.x, y1: sScr.y, x2: tScr.x, y2: tScr.y })
+        const connKey = conn.sourceNodeId + '-' + conn.sourceDotId + '-' + conn.targetNodeId + '-' + conn.targetDotId
+        // Detect node movement → reset handle offsets
+        for (const nid of [conn.sourceNodeId, conn.targetNodeId]) {
+          const prev = nodePositionsRef.current[nid]
+          const cur = editor.getShape(nid)
+          if (cur && prev && (prev.x !== cur.x || prev.y !== cur.y)) {
+            delete handleOffsetsRef.current[connKey]
+          }
+          if (cur) nodePositionsRef.current[nid] = { x: cur.x, y: cur.y }
+        }
+        let route, screenD, screenHandles
+        if (conn.mode === 'straight') {
+          // Straight line
+          const sPt = getEdgePoint(sBounds, conn.sourceDotId)
+          const tPt = getEdgePoint(tBounds, conn.targetDotId)
+          const sScr = toScreen(sPt.x, sPt.y)
+          const tScr = toScreen(tPt.x, tPt.y)
+          screenD = `M ${sScr.x} ${sScr.y} L ${tScr.x} ${tScr.y}`
+          screenHandles = []
+          route = { pts: [sPt, tPt], handles: [] }
+        } else {
+          // Orthogonal routing
+          const off = handleOffsetsRef.current[connKey] || { h2: 0, h3: 0, h4: 0 }
+          route = orthogonalRoute(sBounds, tBounds, conn.sourceDotId, conn.targetDotId, off)
+          const ptsScreen = route.pts.map(p => toScreen(p.x, p.y))
+          screenD = ptsScreen.map((p, i) => (i === 0 ? 'M' : 'L') + ` ${p.x} ${p.y}`).join(' ')
+          screenHandles = route.handles.map(h => ({
+            ...h,
+            sx: (h.x + cam.x) * cam.z,
+            sy: (h.y + cam.y) * cam.z,
+          }))
+        }
+        vis.push({ key: connKey, d: screenD, handles: screenHandles, route, hitSegments: [], mode: conn.mode })
+      }
+      // Compute hit segments for all arrows (page-space → screen-space)
+      for (const a of vis) {
+        if (a.route && a.route.pts) {
+          const pts = a.route.pts.map(p => toScreen(p.x, p.y))
+          const segs = []
+          if (pts.length === 2) {
+            // Straight line: thin band along the line
+            const dx = pts[1].x - pts[0].x
+            const dy = pts[1].y - pts[0].y
+            const len = Math.sqrt(dx * dx + dy * dy)
+            const angle = Math.atan2(dy, dx) * (180 / Math.PI)
+            segs.push({
+              x: (pts[0].x + pts[1].x) / 2,
+              y: (pts[0].y + pts[1].y) / 2,
+              w: Math.max(len, 12),
+              h: 24,
+              angle,
+            })
+          } else {
+            // Orthogonal: per-segment thin bands
+            for (let j = 0; j < pts.length - 1; j++) {
+              const p1 = pts[j], p2 = pts[j + 1]
+              const dx = Math.abs(p2.x - p1.x), dy = Math.abs(p2.y - p1.y)
+              if (dx > 3 || dy > 3) {
+                segs.push({
+                  x: (p1.x + p2.x) / 2,
+                  y: (p1.y + p2.y) / 2,
+                  w: Math.max(dx, 12),
+                  h: Math.max(dy, 12),
+                })
+              }
+            }
+          }
+          a.hitSegments = segs
+        }
       }
       setArrowVisuals(vis)
 
@@ -363,6 +438,10 @@ function ConnectorOverlay({ editor }) {
 
     updateRef.current = update
     update()
+    if (typeof window.__triggerArrowUpdate === 'undefined') {
+      window.__triggerArrowUpdate = () => updateRef.current?.()
+      window.__resetArrowOffsets = (key) => { delete handleOffsetsRef.current[key] }
+    }
     return editor.store.listen(update)
   }, [editor, hoveredShapeId, preview])
 
@@ -460,6 +539,7 @@ function ConnectorOverlay({ editor }) {
           sourceDotId: sourceDot.dotId,
           targetNodeId: target.shapeId,
           targetDotId: target.dotId,
+          mode: window.__DEFAULT_ARROW_MODE || 'orthogonal',
         }]
         // Trigger arrow visual refresh
         if (updateRef.current) updateRef.current()
@@ -479,6 +559,171 @@ function ConnectorOverlay({ editor }) {
     }
   }, [preview, editor, findDot])
 
+  // Handle drag for arrow capsules
+  useEffect(() => {
+    let lastClientY = 0
+    let lastClientX = 0
+    const onHandleMove = (e) => {
+      const drag = draggingHandleRef.current
+      if (!drag) return
+      // Reset tracking on first move after drag starts
+      if (lastClientY === 0) { lastClientY = e.clientY; lastClientX = e.clientX; return }
+      const dy = e.clientY - lastClientY
+      const dx = e.clientX - lastClientX
+      lastClientY = e.clientY
+      lastClientX = e.clientX
+      const cam = cameraRef.current
+      const scale = 1 / cam.z // screen pixels → page pixels
+      const sensitivity = window.__HANDLE_SENSITIVITY || 0.4
+      const delta = (drag.handleType === 'h' ? dy : dx) * scale * sensitivity
+      if (!handleOffsetsRef.current[drag.connKey]) {
+        handleOffsetsRef.current[drag.connKey] = { h2: 0, h3: 0, h4: 0 }
+      }
+      const offs = handleOffsetsRef.current[drag.connKey]
+      offs[drag.offKey] = (offs[drag.offKey] || 0) + delta
+      if (updateRef.current) updateRef.current()
+
+      // ---- Snap to node edges/midlines when snap mode is on ----
+      const ed = window.__TLDRAW_EDITOR
+      if (ed && ed.user?.getIsSnapMode?.()) {
+        const pageId = ed.getCurrentPageId()
+        const conns = (connectionsRef.current[pageId] || [])
+        const conn = conns.find(c =>
+          c.sourceNodeId + '-' + c.sourceDotId + '-' + c.targetNodeId + '-' + c.targetDotId === drag.connKey
+        )
+        if (conn) {
+          const sBounds = ed.getShapePageBounds(conn.sourceNodeId)
+          const tBounds = ed.getShapePageBounds(conn.targetNodeId)
+          if (sBounds && tBounds) {
+            const curOffs = handleOffsetsRef.current[drag.connKey] || { h2: 0, h3: 0, h4: 0 }
+            const route = orthogonalRoute(sBounds, tBounds, conn.sourceDotId, conn.targetDotId, curOffs)
+            const snappedHandle = route.handles.find(h => h.offKey === drag.offKey)
+            if (snappedHandle) {
+              const SNAP_THRESHOLD = 8
+              const axis = drag.handleType === 'h' ? 'y' : 'x'
+              const handleVal = snappedHandle[axis]
+              const targets = []
+              // Collect snap targets from all main flow-nodes on the page
+              const allShapes = ed.store.allRecords().filter(r => r.typeName === 'shape')
+              const flowNodes = allShapes.filter(s => s.type === 'flow-node' && !s.props?.isPort)
+              for (const node of flowNodes) {
+                const nb = ed.getShapePageBounds(node.id)
+                if (!nb) continue
+                if (axis === 'y') {
+                  targets.push(nb.y, nb.y + nb.h / 2, nb.y + nb.h)
+                } else {
+                  targets.push(nb.x, nb.x + nb.w / 2, nb.x + nb.w)
+                }
+              }
+              let closest = null, minDist = Infinity
+              for (const tVal of targets) {
+                const dist = Math.abs(tVal - handleVal)
+                if (dist < minDist && dist < SNAP_THRESHOLD / cam.z) {
+                  minDist = dist; closest = tVal
+                }
+              }
+              if (closest !== null) {
+                const snapDelta = (closest - handleVal) * cam.z * (1 / scale) * (1 / sensitivity)
+                offs[drag.offKey] = (offs[drag.offKey] || 0) + snapDelta
+                // Show guide
+                const guide = { axis, value: closest }
+                setSnapGuides([guide])
+                if (updateRef.current) updateRef.current()
+              } else {
+                setSnapGuides([])
+              }
+            } else {
+              setSnapGuides([])
+            }
+          } else {
+            setSnapGuides([])
+          }
+        } else {
+          setSnapGuides([])
+        }
+      } else {
+        setSnapGuides([])
+      }
+      e.preventDefault()
+    }
+    const onHandleUp = () => {
+      if (draggingHandleRef.current) {
+        draggingHandleRef.current = null
+        document.body.style.cursor = ''
+      }
+      lastClientY = 0
+      lastClientX = 0
+    }
+    document.addEventListener('pointermove', onHandleMove)
+    document.addEventListener('pointerup', onHandleUp)
+    return () => {
+      document.removeEventListener('pointermove', onHandleMove)
+      document.removeEventListener('pointerup', onHandleUp)
+    }
+  }, [])
+
+  // Force arrow update during drag — fallback to store listener
+  useEffect(() => {
+    let isDown = false
+    let raf = null
+    const onDown = () => { isDown = true }
+    const onMove = () => {
+      if (isDown && updateRef.current && !raf) {
+        raf = requestAnimationFrame(() => {
+          raf = null
+          updateRef.current()
+        })
+      }
+    }
+    const onUp = () => { isDown = false; if (raf) { cancelAnimationFrame(raf); raf = null } }
+    document.addEventListener('pointerdown', onDown)
+    document.addEventListener('pointermove', onMove)
+    document.addEventListener('pointerup', onUp)
+    return () => {
+      document.removeEventListener('pointerdown', onDown)
+      document.removeEventListener('pointermove', onMove)
+      document.removeEventListener('pointerup', onUp)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [])
+
+  // Click outside arrow → deselect
+  useEffect(() => {
+    const onDocMouseDown = (e) => {
+      if (!selectedArrowKey) return
+      // If the click target is not an arrow hit area and not a handle, deselect
+      if (!e.target.closest('[data-arrow-key]') && !e.target.closest('[data-handle]')) {
+        setSelectedArrowKey(null)
+      }
+    }
+    document.addEventListener('mousedown', onDocMouseDown)
+    return () => document.removeEventListener('mousedown', onDocMouseDown)
+  }, [selectedArrowKey])
+
+  // Delete key → remove selected arrow
+  useEffect(() => {
+    if (!selectedArrowKey) return
+    const onKeyDown = (e) => {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Deselect tldraw shapes first to prevent tldraw from deleting nodes
+        editor.selectNone()
+        const pageId = editor.getCurrentPageId()
+        const conns = connectionsRef.current[pageId]
+        if (conns) {
+          const idx = conns.findIndex(c =>
+            c.sourceNodeId + '-' + c.sourceDotId + '-' + c.targetNodeId + '-' + c.targetDotId === selectedArrowKey
+          )
+          if (idx !== -1) conns.splice(idx, 1)
+          if (updateRef.current) updateRef.current()
+        }
+        setSelectedArrowKey(null)
+        e.preventDefault()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [selectedArrowKey, editor])
+
   return (
     <div ref={overlayRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9999 }}>
       {/* Saved arrows — custom SVG */}
@@ -487,9 +732,18 @@ function ConnectorOverlay({ editor }) {
           <marker id="arrowhead" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto">
             <polygon points="4 2.5, 0 0, 0 5" fill="#6c63ff" />
           </marker>
+          <marker id="arrowhead-sel" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto">
+            <polygon points="4 2.5, 0 0, 0 5" fill="#ff8844" />
+          </marker>
         </defs>
         {arrowVisuals.map(a => (
-          <line key={a.key} x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2} stroke="#6c63ff" strokeWidth={2.5} markerEnd="url(#arrowhead)" />
+          <path key={a.key} d={a.d}
+            stroke={selectedArrowKey === a.key ? '#ff8844' : '#6c63ff'}
+            strokeWidth={selectedArrowKey === a.key ? 3.5 : 2.5}
+            fill="none"
+            markerEnd={selectedArrowKey === a.key ? 'url(#arrowhead-sel)' : 'url(#arrowhead)'}
+            style={{ transition: 'stroke 0.15s, stroke-width 0.15s' }}
+          />
         ))}
         {/* Preview line during drag */}
         {preview && mouseScreenRef.current && (
@@ -511,6 +765,70 @@ function ConnectorOverlay({ editor }) {
           onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)' }}
         />
       ))}
+      {/* Arrow hit areas — invisible divs for click-to-select */}
+      {arrowVisuals.flatMap(a =>
+        a.hitSegments.map((s, si) => (
+          <div key={a.key + '-h' + si}
+            data-arrow-key={a.key}
+            onClick={(e) => { e.stopPropagation(); setSelectedArrowKey(a.key) }}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              // Toggle arrow mode
+              const pageId = editor.getCurrentPageId()
+              const conns = connectionsRef.current[pageId]
+              if (conns) {
+                const conn = conns.find(c =>
+                  c.sourceNodeId + '-' + c.sourceDotId + '-' + c.targetNodeId + '-' + c.targetDotId === a.key
+                )
+                if (conn) {
+                  conn.mode = conn.mode === 'straight' ? 'orthogonal' : 'straight'
+                  // Reset handle offsets when toggling
+                  delete handleOffsetsRef.current[a.key]
+                  if (updateRef.current) updateRef.current()
+                }
+              }
+              setSelectedArrowKey(a.key)
+            }}
+            style={{
+              position: 'absolute', left: s.x - s.w / 2, top: s.y - s.h / 2,
+              width: s.w, height: s.h, pointerEvents: 'auto', cursor: 'pointer', zIndex: 9996,
+              transform: s.angle ? `rotate(${s.angle}deg)` : undefined,
+              transformOrigin: 'center center',
+            }}
+          />
+        ))
+      )}
+      {/* Arrow handle capsules — only on selected arrow */}
+      {arrowVisuals.flatMap(a =>
+        (selectedArrowKey === a.key ? a.handles : []).map(h => (
+        <div key={a.key + '-' + h.offKey}
+          data-handle={a.key + '-' + h.offKey}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+            draggingHandleRef.current = { connKey: a.key, offKey: h.offKey, handleType: h.type }
+            document.body.style.cursor = h.type === 'h' ? 'ns-resize' : 'ew-resize'
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.5)'; e.currentTarget.style.opacity = '1' }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.opacity = '0.85' }}
+          style={{
+            position: 'absolute',
+            left: h.sx - (h.type === 'h' ? 10 : 4),
+            top: h.sy - (h.type === 'h' ? 4 : 10),
+            width: h.type === 'h' ? 20 : 8,
+            height: h.type === 'h' ? 8 : 20,
+            borderRadius: h.type === 'h' ? '4px' : '4px',
+            background: '#ff8844',
+            border: '1.5px solid #fff',
+            pointerEvents: 'auto',
+            zIndex: 9999,
+            opacity: 0.85,
+            boxShadow: '0 1px 4px rgba(0,0,0,0.4)',
+            transition: 'transform 0.12s, opacity 0.12s',
+          }}
+        />
+      )))}
       {/* Scrollbar overlay for selected node */}
       {scrollbarInfo && (
         <ScrollbarOverlay info={scrollbarInfo} editor={editor} />
@@ -757,6 +1075,7 @@ export default function App() {
   const [editor, setEditor] = useState(null)
   const [ready, setReady] = useState(false)
   const [editingShape, setEditingShape] = useState(null)
+  const [tick, setTick] = useState(0)
   const editorRef = useRef(null)
 
   const handleMount = useCallback((editorInstance) => {
@@ -868,6 +1187,18 @@ export default function App() {
         </div>
         <div className="toolbar-actions">
           <button onClick={addFlowNode} disabled={!ready}>➕ 添加节点</button>
+          <span className="toolbar-divider" />
+          <button onClick={() => {
+            const pageId = editorRef.current?.getCurrentPageId()
+            const conns = window.__getPageConnections?.() || []
+            conns.forEach(c => { c.mode = 'orthogonal'; window.__resetArrowOffsets?.(c.sourceNodeId + '-' + c.sourceDotId + '-' + c.targetNodeId + '-' + c.targetDotId) })
+            window.__triggerArrowUpdate?.()
+          }} disabled={!ready} title="全部箭头改为正交">全部正交</button>
+          <button onClick={() => {
+            const conns = window.__getPageConnections?.() || []
+            conns.forEach(c => { c.mode = 'straight' })
+            window.__triggerArrowUpdate?.()
+          }} disabled={!ready} title="全部箭头改为直线">全部直线</button>
           <span className="toolbar-divider" />
           <AlignmentButtons editorRef={editorRef} ready={ready} />
           <span className="toolbar-divider" />

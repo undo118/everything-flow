@@ -18,8 +18,6 @@ const MENU_ENTRIES = [
       { label: '解锁', actionId: 'unlock' },
       { label: '全部解锁', actionId: 'unlock-all' },
       { type: 'separator' },
-      // 布局
-      { label: '树状图布局' },
       // 全选
       { label: '全选', shortcut: '⌘A', actionId: 'select-all' },
     ],
@@ -33,6 +31,11 @@ const MENU_ENTRIES = [
       { label: '边缘滚动', type: 'toggle', actionId: 'toggle-edge-scrolling' },
       { label: '粘贴到光标', type: 'toggle', actionId: 'toggle-paste-at-cursor' },
       { label: '调试模式', type: 'toggle', actionId: 'toggle-debug-mode' },
+      { type: 'separator' },
+      { label: '默认正交', type: 'toggle', actionId: 'toggle-default-orthogonal' },
+      { label: '手柄灵敏度', submenu: [
+        { label: '灵敏度调节', type: 'slider', min: 0.1, max: 1, step: 0.05 },
+      ]},
       { type: 'separator' },
       { label: '主题', submenu: [
         { label: '浅色', themeAction: 'light' },
@@ -207,6 +210,15 @@ export default function CustomMainMenu() {
       return
     }
 
+    // Custom toggle: default arrow mode
+    if (actionId === 'toggle-default-orthogonal') {
+      const newMode = (window.__DEFAULT_ARROW_MODE || 'orthogonal') === 'orthogonal' ? 'straight' : 'orthogonal'
+      window.__DEFAULT_ARROW_MODE = newMode
+      localStorage.setItem('eflow-default-arrow-mode', newMode)
+      setTick((t) => t + 1)
+      return
+    }
+
     const action = actions[actionId]
     if (action?.onSelect) {
       action.onSelect('menu')
@@ -278,6 +290,7 @@ export default function CustomMainMenu() {
       case 'toggle-dynamic-size-mode': return e.user.getIsDynamicResizeMode()
       case 'toggle-paste-at-cursor': return e.user.getIsPasteAtCursorMode()
       case 'toggle-debug-mode': return e.getInstanceState().isDebugMode
+      case 'toggle-default-orthogonal': return (window.__DEFAULT_ARROW_MODE || 'orthogonal') === 'orthogonal'
       default: return false
     }
   }, [])
@@ -332,6 +345,25 @@ export default function CustomMainMenu() {
                               <span>{item.label}</span>
                               <span className="menu-check">{checked ? '✓' : ''}</span>
                             </>
+                          ) : item.type === 'slider' ? (
+                            <div className="menu-slider-row"
+                              onMouseEnter={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}>
+                              <span className="menu-slider-label">{item.label}</span>
+                              <div className="menu-slider-control">
+                                <input type="range" className="menu-slider-input"
+                                  min={item.min} max={item.max} step={item.step}
+                                  defaultValue={window.__HANDLE_SENSITIVITY || 0.4}
+                                  onChange={(e) => {
+                                    const v = parseFloat(e.target.value)
+                                    window.__HANDLE_SENSITIVITY = v
+                                    // Force re-render of the menu to show updated value
+                                    e.target.nextSibling.textContent = v.toFixed(2)
+                                  }}
+                                />
+                                <span className="menu-slider-value">{(window.__HANDLE_SENSITIVITY || 0.4).toFixed(2)}</span>
+                              </div>
+                            </div>
                           ) : (
                             <span>{item.label}</span>
                           )}
@@ -353,6 +385,27 @@ export default function CustomMainMenu() {
                                   isThemeActive = scheme === sub.themeAction
                                 }
                                 const isLangActive = sub.langAction && e && e.user.getLocale() === sub.langAction
+                                if (sub.type === 'slider') {
+                                  return (
+                                    <div key={j} className="menu-slider-row"
+                                      onMouseEnter={(e) => e.stopPropagation()}
+                                      onClick={(e) => e.stopPropagation()}>
+                                      <span className="menu-slider-label">{sub.label}</span>
+                                      <div className="menu-slider-control">
+                                        <input type="range" className="menu-slider-input"
+                                          min={sub.min} max={sub.max} step={sub.step}
+                                          defaultValue={window.__HANDLE_SENSITIVITY || 0.4}
+                                          onChange={(e) => {
+                                            const v = parseFloat(e.target.value)
+                                            window.__HANDLE_SENSITIVITY = v
+                                            e.target.nextSibling.textContent = v.toFixed(2)
+                                          }}
+                                        />
+                                        <span className="menu-slider-value">{(window.__HANDLE_SENSITIVITY || 0.4).toFixed(2)}</span>
+                                      </div>
+                                    </div>
+                                  )
+                                }
                                 return (
                                 <div key={j} className="menu-item"
                                   onClick={() => {

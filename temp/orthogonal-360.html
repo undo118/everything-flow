@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>正交路由 — 360° 交互验证</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #e0e0e0; font-family: system-ui, sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+  h1 { margin-bottom: 8px; font-weight: 500; font-size: 18px; }
+  .hint { font-size: 12px; color: #888; margin-bottom: 8px; }
+  #svg { display: block; background: #0f0f23; border-radius: 8px; cursor: default; }
+  .info { margin-top: 12px; font-size: 13px; color: #aaa; font-family: monospace; display: flex; gap: 20px; }
+  .info span { color: #ffaa44; }
+</style>
+</head>
+<body>
+
+<h1>🧩 正交路由 360° 验证</h1>
+<p class="hint">🖱 拖拽 <b style="color:#ff8844">节点 B（橙色）</b>绕 A 转圈 · 拖拽 <b style="color:#ff8844">🟠 药丸手柄</b>微调路径</p>
+
+<svg id="svg" width="800" height="600"></svg>
+<div class="info">
+  <span>B:</span> (<span id="bx">--</span>, <span id="by">--</span>)
+  · 段数: <span id="segCount">--</span>
+  · <span id="modeLabel">--</span>
+</div>
+
+<script>
+const svg = document.getElementById('svg')
+const W = 800, H = 600
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+
+const nodeW = 160, nodeH = 70
+const EXT = 30
+
+// ---- A 固定 ----
+const A = { x: 320, y: 280 }
+const aBotY = A.y + nodeH
+const aMidX = A.x + nodeW / 2
+
+// ---- B 初始位置 ----
+let B = { x: 520, y: 280 }
+
+// ---- 手柄偏移量（用户微调） ----
+let hOffset = { h2: 0, h3: 0, h4: 0 }
+
+// ================================================================
+function computePath() {
+  const bTopX = B.x + nodeW / 2
+  const bTopY = B.y
+  const aR = A.x + nodeW, bR = B.x + nodeW
+  const aL = A.x, bL = B.x
+
+  const isBelow = bTopY >= aBotY
+
+  if (isBelow) {
+    const isAligned = Math.abs(aMidX - bTopX) < 5
+    if (isAligned) {
+      return { d: `M ${aMidX} ${aBotY} L ${bTopX} ${bTopY}`, segs: 1, mode: '1段 直连', handles: [] }
+    }
+    const midY = (aBotY + bTopY) / 2 + hOffset.h2
+    const clampMid = Math.max(aBotY + 4, Math.min(bTopY - 4, midY))
+    const d = `M ${aMidX} ${aBotY} L ${aMidX} ${clampMid} L ${bTopX} ${clampMid} L ${bTopX} ${bTopY}`
+    return {
+      d, segs: 3, mode: '3段 L型',
+      handles: [{ type: 'h', x: (aMidX + bTopX)/2, y: clampMid, cls: 'hh2' }]
+    }
+  }
+
+  // 5 段 U 型
+  const overlapX = !(aR < bL || bR < aL)
+  let vertX
+  if (overlapX) {
+    const bMidX = B.x + nodeW / 2
+    vertX = bMidX >= aMidX
+      ? Math.max(aR, bR) + EXT + hOffset.h3
+      : Math.min(aL, bL) - EXT + hOffset.h3
+  } else {
+    const gap = (Math.min(aR, bR) + Math.max(aL, bL)) / 2
+    vertX = gap + hOffset.h3
+  }
+
+  const horizLowY = aBotY + EXT + hOffset.h2
+  const horizHighY = Math.min(bTopY - EXT, aBotY - 10) + hOffset.h4
+
+  // 钳制：下段不能低于上段
+  const clampLow = Math.max(aBotY + 4, horizLowY)
+  const clampHigh = Math.min(horizHighY, clampLow - 10)
+
+  const pts = [
+    { x: aMidX, y: aBotY },
+    { x: aMidX, y: clampLow },
+    { x: vertX, y: clampLow },
+    { x: vertX, y: clampHigh },
+    { x: bTopX, y: clampHigh },
+    { x: bTopX, y: bTopY },
+  ]
+  let segs = 0
+  let parts = [`M ${pts[0].x} ${pts[0].y}`]
+  for (let i = 1; i < pts.length; i++) {
+    const dx = Math.abs(pts[i].x - pts[i-1].x)
+    const dy = Math.abs(pts[i].y - pts[i-1].y)
+    parts.push(`L ${pts[i].x} ${pts[i].y}`)
+    if (dx > 2 || dy > 2) segs++
+  }
+
+  const handles = []
+  // ② 下水平段
+  if (Math.abs(pts[2].x - pts[1].x) > 5) {
+    handles.push({ type: 'h', x: (pts[1].x + pts[2].x) / 2, y: clampLow, cls: 'hh2' })
+  }
+  // ③ 竖段
+  if (Math.abs(clampLow - clampHigh) > 5) {
+    handles.push({ type: 'v', x: vertX, y: (clampLow + clampHigh) / 2, cls: 'hh3' })
+  }
+  // ④ 上水平段
+  if (Math.abs(pts[4].x - vertX) > 5) {
+    handles.push({ type: 'h', x: (vertX + pts[4].x) / 2, y: clampHigh, cls: 'hh4' })
+  }
+
+  return { d: parts.join(' '), segs, mode: '5段 U型', handles }
+}
+
+// ================================================================
+function render() {
+  while (svg.lastChild) svg.removeChild(svg.lastChild)
+
+  const result = computePath()
+  const { d, segs, mode, handles } = result
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+  defs.innerHTML = '<marker id="ah" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto"><polygon points="4 2.5, 0 0, 0 5" fill="#ff6b6b"/></marker>'
+  svg.prepend(defs)
+
+  // 路径
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', d)
+  path.setAttribute('stroke', '#ff6b6b'); path.setAttribute('stroke-width', 2.5)
+  path.setAttribute('fill', 'none'); path.setAttribute('marker-end', 'url(#ah)')
+  svg.appendChild(path)
+
+  // 节点 A
+  const aRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  aRect.setAttribute('x', A.x); aRect.setAttribute('y', A.y)
+  aRect.setAttribute('width', nodeW); aRect.setAttribute('height', nodeH)
+  aRect.setAttribute('rx', 8); aRect.setAttribute('fill', '#1e1e3a')
+  aRect.setAttribute('stroke', '#6c63ff'); aRect.setAttribute('stroke-width', 2)
+  svg.appendChild(aRect)
+  const aLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  aLabel.setAttribute('x', A.x + nodeW/2); aLabel.setAttribute('y', A.y + nodeH/2 + 5)
+  aLabel.setAttribute('text-anchor', 'middle'); aLabel.setAttribute('fill', '#e0e0e0')
+  aLabel.setAttribute('font-size', '14')
+  aLabel.textContent = 'A'
+  svg.appendChild(aLabel)
+
+  // 节点 B（可拖拽）
+  const bRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  bRect.setAttribute('x', B.x); bRect.setAttribute('y', B.y)
+  bRect.setAttribute('width', nodeW); bRect.setAttribute('height', nodeH)
+  bRect.setAttribute('rx', 8); bRect.setAttribute('fill', '#1e1e3a')
+  bRect.setAttribute('stroke', '#ff8844'); bRect.setAttribute('stroke-width', 3)
+  bRect.setAttribute('class', 'node-b')
+  bRect.style.cursor = 'grab'
+  svg.appendChild(bRect)
+  const bLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  bLabel.setAttribute('x', B.x + nodeW/2); bLabel.setAttribute('y', B.y + nodeH/2 + 5)
+  bLabel.setAttribute('text-anchor', 'middle'); bLabel.setAttribute('fill', '#e0e0e0')
+  bLabel.setAttribute('font-size', '14')
+  bLabel.textContent = 'B'
+  svg.appendChild(bLabel)
+
+  // Dots
+  const bTopX = B.x + nodeW / 2
+  ;[{ x: aMidX, y: aBotY }, { x: bTopX, y: B.y }].forEach(d => {
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+    c.setAttribute('cx', d.x); c.setAttribute('cy', d.y)
+    c.setAttribute('r', 5); c.setAttribute('fill', '#6c63ff')
+    c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', 1.5)
+    svg.appendChild(c)
+  })
+
+  // ---- 手柄 ----
+  const hPerp = 2.5 * 3, hPara = 2.5 * 8
+  handles.forEach(h => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    if (h.type === 'h') {
+      el.setAttribute('x', h.x - hPara/2); el.setAttribute('y', h.y - hPerp/2)
+      el.setAttribute('width', hPara); el.setAttribute('height', hPerp)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ns-resize'
+    } else {
+      el.setAttribute('x', h.x - hPerp/2); el.setAttribute('y', h.y - hPara/2)
+      el.setAttribute('width', hPerp); el.setAttribute('height', hPara)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ew-resize'
+    }
+    el.setAttribute('fill', '#ff8844'); el.setAttribute('stroke', '#fff')
+    el.setAttribute('stroke-width', 1); el.setAttribute('opacity', '0.85')
+    el.setAttribute('class', h.cls)
+    svg.appendChild(el)
+  })
+
+  // 信息
+  document.getElementById('bx').textContent = Math.round(B.x)
+  document.getElementById('by').textContent = Math.round(B.y)
+  document.getElementById('segCount').textContent = segs
+  document.getElementById('modeLabel').textContent = mode
+}
+
+// ================================================================
+// ---- 拖拽 B 节点 ----
+function getVb(clientX, clientY) {
+  const rect = svg.getBoundingClientRect()
+  return {
+    x: (clientX - rect.left) * (W / rect.width),
+    y: (clientY - rect.top) * (H / rect.height),
+  }
+}
+
+let dragB = false, dragOffX = 0, dragOffY = 0
+let dragH = null  // 'hh2' | 'hh3' | 'hh4'
+
+svg.addEventListener('pointerdown', (e) => {
+  const cl = e.target.getAttribute('class')
+  const vb = getVb(e.clientX, e.clientY)
+
+  if (e.target.classList.contains('node-b')) {
+    dragB = true
+    dragOffX = vb.x - B.x
+    dragOffY = vb.y - B.y
+    e.target.style.cursor = 'grabbing'
+    // 拖拽节点时重置手柄偏移
+    hOffset = { h2: 0, h3: 0, h4: 0 }
+    e.preventDefault()
+    return
+  }
+
+  if (cl === 'hh2' || cl === 'hh3' || cl === 'hh4') {
+    dragH = cl
+    e.preventDefault()
+  }
+})
+
+document.addEventListener('pointermove', (e) => {
+  const vb = getVb(e.clientX, e.clientY)
+
+  if (dragB) {
+    B.x = Math.max(20, Math.min(W - nodeW - 20, vb.x - dragOffX))
+    B.y = Math.max(20, Math.min(H - nodeH - 20, vb.y - dragOffY))
+    render()
+    e.preventDefault()
+    return
+  }
+
+  if (dragH) {
+    const step = 1  // 1px 步进
+    if (dragH === 'hh2') hOffset.h2 += (vb.y - (hOffset.h2 ? 999 : vb.y)) * 0
+    // Simpler: just set from current position minus default
+    // We'll use relative delta approach
+    if (dragH === 'hh2') hOffset.h2 += (e.movementY || 0) * 0.5
+    if (dragH === 'hh4') hOffset.h4 += (e.movementY || 0) * 0.5
+    if (dragH === 'hh3') hOffset.h3 += (e.movementX || 0) * 0.5
+    render()
+    e.preventDefault()
+  }
+})
+
+document.addEventListener('pointerup', () => {
+  if (dragB) {
+    dragB = false
+    const el = document.querySelector('.node-b')
+    if (el) el.style.cursor = 'grab'
+  }
+  dragH = null
+})
+
+render()
+</script>
+</body>
+</html>

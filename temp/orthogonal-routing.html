@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>正交路由 — bottom→top 情况</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #e0e0e0; font-family: system-ui, sans-serif; padding: 20px; }
+  h1 { margin-bottom: 24px; font-weight: 500; font-size: 20px; }
+  .case { margin-bottom: 40px; padding: 20px; background: #16213e; border-radius: 12px; border: 1px solid #2a2a4a; }
+  .case-label { font-size: 13px; color: #888; margin-bottom: 8px; }
+  .case svg { display: block; background: #0f0f23; border-radius: 8px; }
+  .params { margin-top: 12px; font-size: 13px; color: #aaa; font-family: monospace; }
+  .status-pending { color: #f0c040; }
+  .status-approved { color: #40f060; }
+  .seg-mark { font-size: 11px; fill: #ff6b6b; opacity: 0.7; }
+  .drag-handle { cursor: ns-resize; }
+  .drag-handle-h { cursor: ns-resize; }
+  .drag-handle-v { cursor: ew-resize; }
+</style>
+</head>
+<body>
+
+<h1>🧩 正交路由 — bottom→top 验证</h1>
+
+<!-- ============================================================ -->
+<!-- Case 1: bottom→top 竖直对齐                                     -->
+<!-- ============================================================ -->
+<div class="case">
+  <div class="case-label"><span class="status-approved">✅ 已通过</span> · Case 1 · bottom→top 竖直对齐</div>
+  <svg id="case1" width="600" height="450"></svg>
+  <div class="params">节点 A(200,100) → 节点 B(200,300)，均 180×80，竖直对齐 → 1 段</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- Case 2: bottom→top 竖直不对齐（可拖拽）                           -->
+<!-- ============================================================ -->
+<div class="case">
+  <div class="case-label"><span class="status-approved">✅ 已通过</span> · Case 2 · bottom→top 竖直不对齐 · 🖱 拖拽滑块调整横向段</div>
+  <svg id="case2" width="600" height="450"></svg>
+  <div class="params">A(120,100) → B(270,300) · y∈[y₁, y₂] · 3 段 L 型</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- Case 3: bottom→top 水平并排（A 左 → B 右）                       -->
+<!-- ============================================================ -->
+<div class="case">
+  <div class="case-label"><span class="status-approved">✅ 已通过</span> · Case 3 · A(左).bottom → B(右).top · 水平对齐</div>
+  <svg id="case3" width="700" height="500"></svg>
+  <div class="params">A(80,200) B(380,200) 同Y · Ab→↓30px →→(Ar+Bl)/2 →↑(Bt-30) →→Bt.x →↓Bt.y · 竖线在两节点中间</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- Case 4: bottom→top, B 在 A 正上方                               -->
+<!-- ============================================================ -->
+<div class="case">
+  <div class="case-label"><span class="status-approved">✅ 已通过</span> · Case 4 · B(右) 在 A(左) 正上方 · A.bottom → B.top</div>
+  <svg id="case4" width="700" height="500"></svg>
+  <div class="params">A(80,200) B(80,80) 同X · 同公式：Ab→↓30 →→(Ar+Bl)/2 →↑(Bt-30) →→Bt.x →↓Bt.y</div>
+</div>
+
+<script>
+// ================================================================
+// Case 1: bottom→top, 竖直对齐（已通过 ✅ ，不修改）
+// ================================================================
+(function() {
+  const svg = document.getElementById('case1')
+  const W = 600, H = 450
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+
+  const nodeW = 180, nodeH = 80
+  const ax = 200, ay = 100
+  const bx = 200, by = 300
+  const aBottom = { x: ax + nodeW/2, y: ay + nodeH }
+  const bTop    = { x: bx + nodeW/2, y: by }
+
+  ;[ {x:ax, y:ay, label:'节点 A'}, {x:bx, y:by, label:'节点 B'} ].forEach(n => {
+    const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    r.setAttribute('x', n.x); r.setAttribute('y', n.y)
+    r.setAttribute('width', nodeW); r.setAttribute('height', nodeH)
+    r.setAttribute('rx', 8); r.setAttribute('fill', '#1e1e3a')
+    r.setAttribute('stroke', '#6c63ff'); r.setAttribute('stroke-width', 2)
+    svg.appendChild(r)
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    t.setAttribute('x', n.x + nodeW/2); t.setAttribute('y', n.y + nodeH/2 + 5)
+    t.setAttribute('text-anchor', 'middle'); t.setAttribute('fill', '#e0e0e0')
+    t.setAttribute('font-size', '14')
+    t.textContent = n.label
+    svg.appendChild(t)
+  })
+
+  ;[ {x:aBottom.x, y:aBottom.y, label:'A.bottom'}, {x:bTop.x, y:bTop.y, label:'B.top'} ].forEach(d => {
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+    c.setAttribute('cx', d.x); c.setAttribute('cy', d.y)
+    c.setAttribute('r', 6); c.setAttribute('fill', '#6c63ff')
+    c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', 2)
+    svg.appendChild(c)
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    t.setAttribute('x', d.x + 10); t.setAttribute('y', d.y - 12)
+    t.setAttribute('fill', '#8a8aff'); t.setAttribute('font-size', '11')
+    t.textContent = d.label
+    svg.appendChild(t)
+  })
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+  defs.innerHTML = '<marker id="arrowhead1" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto"><polygon points="4 2.5, 0 0, 0 5" fill="#ff6b6b"/></marker>'
+  svg.prepend(defs)
+
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  p.setAttribute('d', `M ${aBottom.x} ${aBottom.y} L ${bTop.x} ${bTop.y}`)
+  p.setAttribute('stroke', '#ff6b6b'); p.setAttribute('stroke-width', 2.5)
+  p.setAttribute('fill', 'none'); p.setAttribute('marker-end', 'url(#arrowhead1)')
+  svg.appendChild(p)
+
+  const sl = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  sl.setAttribute('x', aBottom.x + 15); sl.setAttribute('y', (aBottom.y + bTop.y) / 2)
+  sl.setAttribute('class', 'seg-mark')
+  sl.textContent = '1 段（直连）'
+  svg.appendChild(sl)
+})();
+
+// ================================================================
+// Case 2: bottom→top, 竖直不对齐 — 可拖拽（已通过 ✅ ，不修改）
+// ================================================================
+(function() {
+  const svg = document.getElementById('case2')
+  const W = 600, H = 450
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+  svg.style.cursor = 'default'
+
+  const nodeW = 180, nodeH = 80
+  const ax = 120, ay = 100
+  const bx = 270, by = 300
+  const y1 = ay + nodeH
+  const y2 = by
+  const aX = ax + nodeW / 2
+  const bX = bx + nodeW / 2
+  const midX = (aX + bX) / 2
+  let currentY = (y1 + y2) / 2
+
+  function render(yPos) {
+    while (svg.lastChild) svg.removeChild(svg.lastChild)
+
+    ;[ {x:ax, y:ay, label:'节点 A'}, {x:bx, y:by, label:'节点 B'} ].forEach(n => {
+      const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      r.setAttribute('x', n.x); r.setAttribute('y', n.y)
+      r.setAttribute('width', nodeW); r.setAttribute('height', nodeH)
+      r.setAttribute('rx', 8); r.setAttribute('fill', '#1e1e3a')
+      r.setAttribute('stroke', '#6c63ff'); r.setAttribute('stroke-width', 2)
+      svg.appendChild(r)
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      t.setAttribute('x', n.x + nodeW/2); t.setAttribute('y', n.y + nodeH/2 + 5)
+      t.setAttribute('text-anchor', 'middle'); t.setAttribute('fill', '#e0e0e0')
+      t.setAttribute('font-size', '14')
+      t.textContent = n.label
+      svg.appendChild(t)
+    })
+
+    ;[ {x:aX, y:y1, label:'A.bottom'}, {x:bX, y:y2, label:'B.top'} ].forEach(d => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      c.setAttribute('cx', d.x); c.setAttribute('cy', d.y)
+      c.setAttribute('r', 6); c.setAttribute('fill', '#6c63ff')
+      c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', 2)
+      svg.appendChild(c)
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      t.setAttribute('x', d.x + 10); t.setAttribute('y', d.y - 12)
+      t.setAttribute('fill', '#8a8aff'); t.setAttribute('font-size', '11')
+      t.textContent = d.label
+      svg.appendChild(t)
+    })
+
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+    defs.innerHTML = '<marker id="arrowhead2" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto"><polygon points="4 2.5, 0 0, 0 5" fill="#ff6b6b"/></marker>'
+    svg.prepend(defs)
+
+    const d = `M ${aX} ${y1} L ${aX} ${yPos} L ${bX} ${yPos} L ${bX} ${y2}`
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    p.setAttribute('d', d)
+    p.setAttribute('stroke', '#ff6b6b'); p.setAttribute('stroke-width', 2.5)
+    p.setAttribute('fill', 'none'); p.setAttribute('marker-end', 'url(#arrowhead2)')
+    svg.appendChild(p)
+
+    const segLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    segLabel.setAttribute('x', midX); segLabel.setAttribute('y', yPos - 8)
+    segLabel.setAttribute('text-anchor', 'middle'); segLabel.setAttribute('class', 'seg-mark')
+    segLabel.textContent = '3 段 L 型'
+    svg.appendChild(segLabel)
+
+    const extMark = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    extMark.setAttribute('x', aX - 55); extMark.setAttribute('y', yPos + 4)
+    extMark.setAttribute('fill', '#ffaa44'); extMark.setAttribute('font-size', '11')
+    extMark.setAttribute('text-anchor', 'end')
+    extMark.textContent = `y = ${Math.round(yPos)}`
+    svg.appendChild(extMark)
+
+    // 手柄
+    const hH = 2.5 * 3
+    const hW = 2.5 * 8
+    const handle = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    handle.setAttribute('x', midX - hW / 2)
+    handle.setAttribute('y', yPos - hH / 2)
+    handle.setAttribute('width', hW)
+    handle.setAttribute('height', hH)
+    handle.setAttribute('rx', hH / 2)
+    handle.setAttribute('ry', hH / 2)
+    handle.setAttribute('fill', '#ff8844')
+    handle.setAttribute('stroke', '#fff')
+    handle.setAttribute('stroke-width', 1)
+    handle.setAttribute('opacity', '0.85')
+    handle.setAttribute('class', 'drag-handle')
+    handle.style.cursor = 'ns-resize'
+    svg.appendChild(handle)
+  }
+
+  function getViewBoxY(clientY) {
+    const rect = svg.getBoundingClientRect()
+    const scale = H / rect.height
+    return (clientY - rect.top) * scale
+  }
+
+  let dragging = false
+  svg.addEventListener('pointerdown', (e) => {
+    if (e.target.classList && e.target.classList.contains('drag-handle')) {
+      dragging = true
+      svg.setPointerCapture(e.pointerId)
+      svg.style.cursor = 'ns-resize'
+      e.preventDefault()
+    }
+  })
+  document.addEventListener('pointermove', (e) => {
+    if (!dragging) return
+    const vbY = getViewBoxY(e.clientY)
+    currentY = Math.max(y1 + 2, Math.min(y2 - 2, vbY))
+    render(currentY)
+    e.preventDefault()
+  })
+  document.addEventListener('pointerup', (e) => {
+    if (!dragging) return
+    dragging = false
+    svg.style.cursor = 'default'
+    e.preventDefault()
+  })
+
+  render(currentY)
+})();
+
+// ================================================================
+// Case 3: bottom→top, 水平对齐（A 左 B 右）
+// 公式：Ab→↓30 →→(Ar+Bl)/2 →↑(Bt-30) →→Bt.x →↓Bt.y
+// 可拖拽：②水平段(Y)、③竖向段(X)、④水平段(Y)
+// ================================================================
+(function() {
+  const svg = document.getElementById('case3')
+  const W = 700, H = 500
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+
+  const nodeW = 180, nodeH = 80
+
+  // 水平对齐的两个节点
+  const ax = 80, ay = 200
+  const bx = 380, by = 200
+
+  // 关键坐标
+  const aBotX = ax + nodeW / 2     // 170
+  const aBotY = ay + nodeH         // 280
+  const bTopX = bx + nodeW / 2     // 470
+  const bTopY = by                 // 200
+
+  const ar = ax + nodeW            // 260
+  const bl = bx                    // 380
+
+  // 默认参数
+  const EXT = 30
+  const DEF_HORIZ2 = aBotY + EXT   // 310（下水平段）
+  const DEF_HORIZ4 = bTopY - EXT   // 170（上水平段）
+  const DEF_VERT3 = (ar + bl) / 2  // 320（两节点中间）
+
+  // 拖拽状态
+  let horiz2Y = DEF_HORIZ2
+  let horiz4Y = DEF_HORIZ4
+  let vert3X = DEF_VERT3
+
+  // ---- 手柄尺寸 ----
+  const hPerp = 2.5 * 3    // 7.5（垂直于线段方向）
+  const hPara = 2.5 * 8    // 20（平行于线段方向）
+
+  // ================================================================
+  function render() {
+    while (svg.lastChild) svg.removeChild(svg.lastChild)
+
+    // ---- 节点 ----
+    ;[ {x:ax, y:ay, label:'节点 A'}, {x:bx, y:by, label:'节点 B'} ].forEach(n => {
+      const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      r.setAttribute('x', n.x); r.setAttribute('y', n.y)
+      r.setAttribute('width', nodeW); r.setAttribute('height', nodeH)
+      r.setAttribute('rx', 8); r.setAttribute('fill', '#1e1e3a')
+      r.setAttribute('stroke', '#6c63ff'); r.setAttribute('stroke-width', 2)
+      svg.appendChild(r)
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      t.setAttribute('x', n.x + nodeW/2); t.setAttribute('y', n.y + nodeH/2 + 5)
+      t.setAttribute('text-anchor', 'middle'); t.setAttribute('fill', '#e0e0e0')
+      t.setAttribute('font-size', '14')
+      t.textContent = n.label
+      svg.appendChild(t)
+    })
+
+    // ---- dot ----
+    ;[ {x:aBotX, y:aBotY, label:'A.bottom'}, {x:bTopX, y:bTopY, label:'B.top'} ].forEach(d => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      c.setAttribute('cx', d.x); c.setAttribute('cy', d.y)
+      c.setAttribute('r', 6); c.setAttribute('fill', '#6c63ff')
+      c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', 2)
+      svg.appendChild(c)
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      t.setAttribute('x', d.x + 10); t.setAttribute('y', d.y - 12)
+      t.setAttribute('fill', '#8a8aff'); t.setAttribute('font-size', '11')
+      t.textContent = d.label
+      svg.appendChild(t)
+    })
+
+    // ---- 箭头 ----
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+    defs.innerHTML = '<marker id="arrowhead3" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto"><polygon points="4 2.5, 0 0, 0 5" fill="#ff6b6b"/></marker>'
+    svg.prepend(defs)
+
+    // ---- 5 段路径 ----
+    const d = `M ${aBotX} ${aBotY}
+               L ${aBotX} ${horiz2Y}
+               L ${vert3X} ${horiz2Y}
+               L ${vert3X} ${horiz4Y}
+               L ${bTopX} ${horiz4Y}
+               L ${bTopX} ${bTopY}`
+
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    p.setAttribute('d', d.replace(/\n/g, ' '))
+    p.setAttribute('stroke', '#ff6b6b'); p.setAttribute('stroke-width', 2.5)
+    p.setAttribute('fill', 'none'); p.setAttribute('marker-end', 'url(#arrowhead3)')
+    svg.appendChild(p)
+
+    // ---- 拖拽手柄 ----
+
+    // ② 下水平段（平行→，上下拖）
+    const h2x = (aBotX + vert3X) / 2
+    const h2 = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    h2.setAttribute('x', h2x - hPara / 2)
+    h2.setAttribute('y', horiz2Y - hPerp / 2)
+    h2.setAttribute('width', hPara)
+    h2.setAttribute('height', hPerp)
+    h2.setAttribute('rx', hPerp / 2)
+    h2.setAttribute('ry', hPerp / 2)
+    h2.setAttribute('fill', '#ff8844')
+    h2.setAttribute('stroke', '#fff')
+    h2.setAttribute('stroke-width', 1)
+    h2.setAttribute('opacity', '0.85')
+    h2.setAttribute('class', 'c3h2')
+    h2.style.cursor = 'ns-resize'
+    svg.appendChild(h2)
+
+    // ③ 竖段（平行↑↓，左右拖）
+    const h3y = (horiz2Y + horiz4Y) / 2
+    const h3 = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    h3.setAttribute('x', vert3X - hPerp / 2)
+    h3.setAttribute('y', h3y - hPara / 2)
+    h3.setAttribute('width', hPerp)
+    h3.setAttribute('height', hPara)
+    h3.setAttribute('rx', hPerp / 2)
+    h3.setAttribute('ry', hPerp / 2)
+    h3.setAttribute('fill', '#ff8844')
+    h3.setAttribute('stroke', '#fff')
+    h3.setAttribute('stroke-width', 1)
+    h3.setAttribute('opacity', '0.85')
+    h3.setAttribute('class', 'c3h3')
+    h3.style.cursor = 'ew-resize'
+    svg.appendChild(h3)
+
+    // ④ 上水平段（平行→，上下拖）
+    const h4x = (vert3X + bTopX) / 2
+    const h4 = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    h4.setAttribute('x', h4x - hPara / 2)
+    h4.setAttribute('y', horiz4Y - hPerp / 2)
+    h4.setAttribute('width', hPara)
+    h4.setAttribute('height', hPerp)
+    h4.setAttribute('rx', hPerp / 2)
+    h4.setAttribute('ry', hPerp / 2)
+    h4.setAttribute('fill', '#ff8844')
+    h4.setAttribute('stroke', '#fff')
+    h4.setAttribute('stroke-width', 1)
+    h4.setAttribute('opacity', '0.85')
+    h4.setAttribute('class', 'c3h4')
+    h4.style.cursor = 'ns-resize'
+    svg.appendChild(h4)
+
+    // ---- 段数及值标注 ----
+    const segLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    segLabel.setAttribute('x', vert3X); segLabel.setAttribute('y', (horiz2Y + horiz4Y) / 2)
+    segLabel.setAttribute('text-anchor', 'middle'); segLabel.setAttribute('class', 'seg-mark')
+    segLabel.textContent = '5 段'
+    svg.appendChild(segLabel)
+
+    const info = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    info.setAttribute('x', W - 20); info.setAttribute('y', 20)
+    info.setAttribute('fill', '#666'); info.setAttribute('font-size', '11')
+    info.setAttribute('text-anchor', 'end')
+    info.textContent = `②Y=${Math.round(horiz2Y)}  ③X=${Math.round(vert3X)}  ④Y=${Math.round(horiz4Y)}`
+    svg.appendChild(info)
+  }
+
+  // ---- 坐标转换 ----
+  function getVb(clientX, clientY) {
+    const rect = svg.getBoundingClientRect()
+    return {
+      x: (clientX - rect.left) * (W / rect.width),
+      y: (clientY - rect.top) * (H / rect.height),
+    }
+  }
+
+  // ---- 拖拽事件 ----
+  let drag = null // 'h2' | 'h3' | 'h4'
+
+  svg.addEventListener('pointerdown', (e) => {
+    const cl = e.target.getAttribute('class')
+    if (cl === 'c3h2') { drag = 'h2'; svg.setPointerCapture(e.pointerId); e.preventDefault() }
+    else if (cl === 'c3h3') { drag = 'h3'; svg.setPointerCapture(e.pointerId); e.preventDefault() }
+    else if (cl === 'c3h4') { drag = 'h4'; svg.setPointerCapture(e.pointerId); e.preventDefault() }
+  })
+
+  document.addEventListener('pointermove', (e) => {
+    if (!drag) return
+    const vb = getVb(e.clientX, e.clientY)
+    if (drag === 'h2') {
+      // ② Y 范围：[aBotY+2, 不受限]
+      horiz2Y = Math.max(aBotY + 2, vb.y)
+    } else if (drag === 'h3') {
+      // ③ X 范围：[ar+2, bl-2] 两节点之间
+      vert3X = Math.max(ar + 2, Math.min(bl - 2, vb.x))
+    } else if (drag === 'h4') {
+      // ④ Y 范围：[不受限, bTopY-2]
+      horiz4Y = Math.min(bTopY - 2, vb.y)
+    }
+    // 保证 ② > ④ （下段在上段之下）
+    if (horiz2Y <= horiz4Y + 5) {
+      if (drag === 'h2') horiz2Y = horiz4Y + 5
+      if (drag === 'h4') horiz4Y = horiz2Y - 5
+    }
+    render()
+    e.preventDefault()
+  })
+
+  document.addEventListener('pointerup', () => { drag = null })
+
+  render()
+})();
+
+// ================================================================
+// Case 4: bottom→top, B 在 A 正上方
+// 公式同 Case 3：Ab→↓30 →→(Ar+Bl)/2 →↑(Bt-30) →→Bt.x →↓Bt.y
+// ================================================================
+(function() {
+  const svg = document.getElementById('case4')
+  const W = 700, H = 500
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+
+  const nodeW = 180, nodeH = 80
+
+  // B 在 A 正上方（同 X）
+  const ax = 80, ay = 200
+  const bx = 80, by = 80
+
+  // 关键坐标
+  const aBotX = ax + nodeW / 2     // 170
+  const aBotY = ay + nodeH         // 280
+  const bTopX = bx + nodeW / 2     // 170
+  const bTopY = by                 // 80
+
+  const ar = ax + nodeW            // 260
+  const bl = bx                    // 80
+
+  // 默认参数
+  const EXT = 30
+  const DEF_HORIZ2 = aBotY + EXT   // 310
+  const DEF_HORIZ4 = bTopY - EXT   // 50
+  const DEF_VERT3 = Math.max(ar, bx + nodeW) + 30  // 右侧 30px
+
+  let horiz2Y = DEF_HORIZ2
+  let horiz4Y = DEF_HORIZ4
+  let vert3X = DEF_VERT3
+
+  const hPerp = 2.5 * 3
+  const hPara = 2.5 * 8
+
+  function render() {
+    while (svg.lastChild) svg.removeChild(svg.lastChild)
+
+    // ---- 节点 ----
+    ;[ {x:ax, y:ay, label:'节点 A'}, {x:bx, y:by, label:'节点 B'} ].forEach(n => {
+      const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      r.setAttribute('x', n.x); r.setAttribute('y', n.y)
+      r.setAttribute('width', nodeW); r.setAttribute('height', nodeH)
+      r.setAttribute('rx', 8); r.setAttribute('fill', '#1e1e3a')
+      r.setAttribute('stroke', '#6c63ff'); r.setAttribute('stroke-width', 2)
+      svg.appendChild(r)
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      t.setAttribute('x', n.x + nodeW/2); t.setAttribute('y', n.y + nodeH/2 + 5)
+      t.setAttribute('text-anchor', 'middle'); t.setAttribute('fill', '#e0e0e0')
+      t.setAttribute('font-size', '14')
+      t.textContent = n.label
+      svg.appendChild(t)
+    })
+
+    // ---- dot ----
+    ;[ {x:aBotX, y:aBotY, label:'A.bottom'}, {x:bTopX, y:bTopY, label:'B.top'} ].forEach(d => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      c.setAttribute('cx', d.x); c.setAttribute('cy', d.y)
+      c.setAttribute('r', 6); c.setAttribute('fill', '#6c63ff')
+      c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', 2)
+      svg.appendChild(c)
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      t.setAttribute('x', d.x + 10); t.setAttribute('y', d.y - 12)
+      t.setAttribute('fill', '#8a8aff'); t.setAttribute('font-size', '11')
+      t.textContent = d.label
+      svg.appendChild(t)
+    })
+
+    // ---- 箭头 ----
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+    defs.innerHTML = '<marker id="arrowhead4" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto"><polygon points="4 2.5, 0 0, 0 5" fill="#ff6b6b"/></marker>'
+    svg.prepend(defs)
+
+    // ---- 5 段路径（同 Case 3 公式） ----
+    const d = `M ${aBotX} ${aBotY}
+               L ${aBotX} ${horiz2Y}
+               L ${vert3X} ${horiz2Y}
+               L ${vert3X} ${horiz4Y}
+               L ${bTopX} ${horiz4Y}
+               L ${bTopX} ${bTopY}`
+
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    p.setAttribute('d', d.replace(/\n/g, ' '))
+    p.setAttribute('stroke', '#ff6b6b'); p.setAttribute('stroke-width', 2.5)
+    p.setAttribute('fill', 'none'); p.setAttribute('marker-end', 'url(#arrowhead4)')
+    svg.appendChild(p)
+
+    // ---- 拖拽手柄（同 Case 3 布局） ----
+    // ② 下水平段
+    const h2x = (aBotX + vert3X) / 2
+    const h2 = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    h2.setAttribute('x', h2x - hPara / 2)
+    h2.setAttribute('y', horiz2Y - hPerp / 2)
+    h2.setAttribute('width', hPara); h2.setAttribute('height', hPerp)
+    h2.setAttribute('rx', hPerp / 2); h2.setAttribute('ry', hPerp / 2)
+    h2.setAttribute('fill', '#ff8844'); h2.setAttribute('stroke', '#fff')
+    h2.setAttribute('stroke-width', 1); h2.setAttribute('opacity', '0.85')
+    h2.setAttribute('class', 'c4h2'); h2.style.cursor = 'ns-resize'
+    svg.appendChild(h2)
+
+    // ③ 竖段
+    const h3y = (horiz2Y + horiz4Y) / 2
+    const h3 = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    h3.setAttribute('x', vert3X - hPerp / 2)
+    h3.setAttribute('y', h3y - hPara / 2)
+    h3.setAttribute('width', hPerp); h3.setAttribute('height', hPara)
+    h3.setAttribute('rx', hPerp / 2); h3.setAttribute('ry', hPerp / 2)
+    h3.setAttribute('fill', '#ff8844'); h3.setAttribute('stroke', '#fff')
+    h3.setAttribute('stroke-width', 1); h3.setAttribute('opacity', '0.85')
+    h3.setAttribute('class', 'c4h3'); h3.style.cursor = 'ew-resize'
+    svg.appendChild(h3)
+
+    // ④ 上水平段
+    const h4x = (vert3X + bTopX) / 2
+    const h4 = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    h4.setAttribute('x', h4x - hPara / 2)
+    h4.setAttribute('y', horiz4Y - hPerp / 2)
+    h4.setAttribute('width', hPara); h4.setAttribute('height', hPerp)
+    h4.setAttribute('rx', hPerp / 2); h4.setAttribute('ry', hPerp / 2)
+    h4.setAttribute('fill', '#ff8844'); h4.setAttribute('stroke', '#fff')
+    h4.setAttribute('stroke-width', 1); h4.setAttribute('opacity', '0.85')
+    h4.setAttribute('class', 'c4h4'); h4.style.cursor = 'ns-resize'
+    svg.appendChild(h4)
+
+    // ---- 标注 ----
+    const segLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    segLabel.setAttribute('x', vert3X); segLabel.setAttribute('y', (horiz2Y + horiz4Y) / 2)
+    segLabel.setAttribute('text-anchor', 'middle'); segLabel.setAttribute('class', 'seg-mark')
+    segLabel.textContent = '5 段'
+    svg.appendChild(segLabel)
+
+    const info = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    info.setAttribute('x', W - 20); info.setAttribute('y', 20)
+    info.setAttribute('fill', '#666'); info.setAttribute('font-size', '11')
+    info.setAttribute('text-anchor', 'end')
+    info.textContent = `②Y=${Math.round(horiz2Y)}  ③X=${Math.round(vert3X)}  ④Y=${Math.round(horiz4Y)}`
+    svg.appendChild(info)
+  }
+
+  // ---- 拖拽 ----
+  function getVb(clientX, clientY) {
+    const rect = svg.getBoundingClientRect()
+    return {
+      x: (clientX - rect.left) * (W / rect.width),
+      y: (clientY - rect.top) * (H / rect.height),
+    }
+  }
+
+  let drag = null
+  svg.addEventListener('pointerdown', (e) => {
+    const cl = e.target.getAttribute('class')
+    if (cl === 'c4h2') { drag = 'h2'; svg.setPointerCapture(e.pointerId); e.preventDefault() }
+    else if (cl === 'c4h3') { drag = 'h3'; svg.setPointerCapture(e.pointerId); e.preventDefault() }
+    else if (cl === 'c4h4') { drag = 'h4'; svg.setPointerCapture(e.pointerId); e.preventDefault() }
+  })
+
+  document.addEventListener('pointermove', (e) => {
+    if (!drag) return
+    const vb = getVb(e.clientX, e.clientY)
+    if (drag === 'h2') horiz2Y = Math.max(aBotY + 2, vb.y)
+    else if (drag === 'h3') {
+      // ③ X 范围：不可在两节点之间
+      const leftMax = Math.min(ax, bx)
+      const rightMin = Math.max(ar, bx + nodeW)
+      if (vb.x < leftMax) vert3X = Math.max(-50, vb.x)
+      else if (vb.x > rightMin) vert3X = Math.min(W + 50, vb.x)
+    }
+    else if (drag === 'h4') horiz4Y = Math.min(bTopY - 2, vb.y)
+    if (horiz2Y <= horiz4Y + 5) {
+      if (drag === 'h2') horiz2Y = horiz4Y + 5
+      if (drag === 'h4') horiz4Y = horiz2Y - 5
+    }
+    render()
+    e.preventDefault()
+  })
+
+  document.addEventListener('pointerup', () => { drag = null })
+
+  render()
+})();
+</script>
+
+</body>
+</html>

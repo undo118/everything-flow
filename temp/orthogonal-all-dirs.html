@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>正交路由 — 全部方向 360° 验证</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #e0e0e0; font-family: system-ui, sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+  h1 { margin-bottom: 6px; font-weight: 500; font-size: 18px; }
+  .hint { font-size: 12px; color: #888; margin-bottom: 10px; }
+  .controls { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+  .controls button {
+    padding: 6px 16px; border: 1px solid #444; border-radius: 6px;
+    background: #2a2a4a; color: #e0e0e0; cursor: pointer; font-size: 13px;
+    transition: all 0.15s;
+  }
+  .controls button:hover { background: #3a3a5a; }
+  .controls button.active { background: #6c63ff; border-color: #6c63ff; color: #fff; }
+  #svg { display: block; background: #0f0f23; border-radius: 8px; cursor: default; }
+  .info { margin-top: 10px; font-size: 13px; color: #aaa; font-family: monospace; display: flex; gap: 20px; }
+  .info span { color: #ffaa44; }
+</style>
+</head>
+<body>
+
+<h1>🧩 正交路由 全部方向验证</h1>
+<p class="hint">🖱 拖拽 <b style="color:#ff8844">节点 B</b> 绕 A 转圈 · 拖拽 <b style="color:#ff8844">🟠 手柄</b>微调</p>
+
+<div class="controls">
+  <button class="active" data-dir="bottom-top">A.b → B.t ✅</button>
+  <button data-dir="top-bottom">A.t → B.b</button>
+  <button data-dir="right-left">A.r → B.l</button>
+  <button data-dir="left-right">A.l → B.r</button>
+</div>
+
+<svg id="svg" width="800" height="600"></svg>
+<div class="info">
+  B: (<span id="bx">--</span>, <span id="by">--</span>)
+  · 段数: <span id="segCount">--</span>
+  · <span id="modeLabel">--</span>
+</div>
+
+<script>
+const svg = document.getElementById('svg')
+const W = 800, H = 600
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+
+const nodeW = 160, nodeH = 70
+const EXT = 30
+const A = { x: 320, y: 280 }
+
+let B = { x: 520, y: 280 }
+let hOffset = { h2: 0, h3: 0, h4: 0 }
+let currentDir = 'bottom-top'
+
+// ---- 方向定义 ----
+const DIRS = {
+  'bottom-top': {
+    label: 'A.b → B.t',
+    aDot: { x: A.x + nodeW/2, y: A.y + nodeH },           // bottom
+    bDot: (B) => ({ x: B.x + nodeW/2, y: B.y }),           // top
+    aDotLabel: 'A.b',
+    bDotLabel: 'B.t',
+    isAhead: (b, aBot) => b >= aBot - 5,                    // B 在 A 下方
+    isAligned: (aX, bX) => Math.abs(aX - bX) < 5,
+    // 前方用简单模式
+    simplePath: (aX, aY, bX, bY, off) => {
+      const midY = (aY + bY) / 2 + off
+      const clamp = Math.max(aY + 4, Math.min(bY - 4, midY))
+      return `M ${aX} ${aY} L ${aX} ${clamp} L ${bX} ${clamp} L ${bX} ${bY}`
+    },
+    // 后方用 5 段 U 型
+    getVertX: (overlap, aX, bX, aR, bR, aL, bL, bMidX, off) => {
+      const G = 25
+      if (overlap) return (bMidX >= aX ? Math.max(aR, bR) + G : Math.min(aL, bL) - G) + off
+      return (Math.min(aR, bR) + Math.max(aL, bL)) / 2 + off
+    },
+    getLowY: (aBot) => aBot + EXT,
+    getHighY: (bTop, aBot) => Math.min(bTop - EXT, aBot - 10),
+    handleType: 'ns',  // 水平段手柄 → ns-resize
+  },
+  'top-bottom': {
+    label: 'A.t → B.b',
+    aDot: { x: A.x + nodeW/2, y: A.y },                    // top
+    bDot: (B) => ({ x: B.x + nodeW/2, y: B.y + nodeH }),   // bottom
+    aDotLabel: 'A.t',
+    bDotLabel: 'B.b',
+    isAhead: (b, aTop) => b <= aTop + 5,                    // B 在 A 上方
+    isAligned: (aX, bX) => Math.abs(aX - bX) < 5,
+    simplePath: (aX, aY, bX, bY, off) => {
+      const midY = (aY + bY) / 2 + off
+      const clamp = Math.max(bY + 4, Math.min(aY - 4, midY))
+      return `M ${aX} ${aY} L ${aX} ${clamp} L ${bX} ${clamp} L ${bX} ${bY}`
+    },
+    getVertX: (overlap, aX, bX, aR, bR, aL, bL, bMidX, off) => {
+      const G = 25
+      if (overlap) return (bMidX >= aX ? Math.max(aR, bR) + G : Math.min(aL, bL) - G) + off
+      return (Math.min(aR, bR) + Math.max(aL, bL)) / 2 + off
+    },
+    getLowY: (aTop) => aTop - EXT,
+    getHighY: (bBot, aTop) => Math.max(bBot + EXT, aTop + nodeH + EXT),
+    handleType: 'ns',
+  },
+  'right-left': {
+    label: 'A.r → B.l',
+    aDot: { x: A.x + nodeW, y: A.y + nodeH/2 },            // right
+    bDot: (B) => ({ x: B.x, y: B.y + nodeH/2 }),           // left
+    aDotLabel: 'A.r',
+    bDotLabel: 'B.l',
+    isAhead: (b, aR) => b >= aR - 5,                        // B 在 A 右侧
+    isAligned: (aY, bY) => Math.abs(aY - bY) < 5,
+    simplePath: (aX, aY, bX, bY, off) => {
+      const midX = (aX + bX) / 2 + off
+      const clamp = Math.max(aX + 4, Math.min(bX - 4, midX))
+      return `M ${aX} ${aY} L ${clamp} ${aY} L ${clamp} ${bY} L ${bX} ${bY}`
+    },
+    getVertX: (overlap, aY, bY, aB, bB, aT, bT, bMidY, off) => {
+      const G = 25
+      if (overlap) return (bMidY >= aY ? Math.max(aB, bB) + G : Math.min(aT, bT) - G) + off
+      return (Math.min(aB, bB) + Math.max(aT, bT)) / 2 + off
+    },
+    getLowY: (aR) => aR + EXT,
+    getHighY: (bL, aR) => Math.min(bL - EXT, A.x - EXT),
+    handleType: 'ew',  // 竖段手柄 → ew-resize ... actually for this rotation, the "horizontal" segments are vertical now
+  },
+  'left-right': {
+    label: 'A.l → B.r',
+    aDot: { x: A.x, y: A.y + nodeH/2 },                    // left
+    bDot: (B) => ({ x: B.x + nodeW, y: B.y + nodeH/2 }),   // right
+    aDotLabel: 'A.l',
+    bDotLabel: 'B.r',
+    isAhead: (b, aL) => b <= aL + 5,                        // B 在 A 左侧
+    isAligned: (aY, bY) => Math.abs(aY - bY) < 5,
+    simplePath: (aX, aY, bX, bY, off) => {
+      const midX = (aX + bX) / 2 + off
+      const clamp = Math.max(bX + 4, Math.min(aX - 4, midX))
+      return `M ${aX} ${aY} L ${clamp} ${aY} L ${clamp} ${bY} L ${bX} ${bY}`
+    },
+    getVertX: (overlap, aY, bY, aB, bB, aT, bT, bMidY, off) => {
+      const G = 25
+      if (overlap) return (bMidY >= aY ? Math.max(aB, bB) + G : Math.min(aT, bT) - G) + off
+      return (Math.min(aB, bB) + Math.max(aT, bT)) / 2 + off
+    },
+    getLowY: (aL) => aL - EXT,
+    getHighY: (bR, aL) => Math.max(bR + EXT, A.x + nodeW + EXT),
+    handleType: 'ew',
+  },
+}
+
+// ================================================================
+function computePath() {
+  const dir = DIRS[currentDir]
+  const aDot = dir.aDot
+  const bDot = dir.bDot(B)
+
+  const aX = aDot.x, aY = aDot.y
+  const bX = bDot.x, bY = bDot.y
+
+  const aR = A.x + nodeW, bR = B.x + nodeW
+  const aL = A.x, bL = B.x
+  const aT = A.y, bT = B.y
+  const aB = A.y + nodeH, bB = B.y + nodeH
+
+  const isAhead = dir.isAhead(currentDir === 'bottom-top' || currentDir === 'top-bottom' ? bY : bX,
+    currentDir === 'bottom-top' ? aY : currentDir === 'top-bottom' ? aY :
+    currentDir === 'right-left' ? aX : aX)
+
+  // For simple mode, check alignment
+  const axisAligned = dir.isAligned(
+    currentDir === 'bottom-top' || currentDir === 'top-bottom' ? aX : aY,
+    currentDir === 'bottom-top' || currentDir === 'top-bottom' ? bX : bY
+  )
+
+  if (isAhead) {
+    if (axisAligned) {
+      // 1 段直连
+      return { d: `M ${aX} ${aY} L ${bX} ${bY}`, segs: 1, mode: '1段 直连', handles: [] }
+    }
+    // 3 段
+    const d = dir.simplePath(aX, aY, bX, bY, hOffset.h2)
+    // handle position (middle of the "mid" segment)
+    let hx, hy, hType
+    if (currentDir === 'bottom-top' || currentDir === 'top-bottom') {
+      const mid = (aY + bY) / 2 + hOffset.h2
+      const clamp = Math.max(Math.min(aY, bY) + 4, Math.min(Math.max(aY, bY) - 4, mid))
+      hx = (aX + bX) / 2
+      hy = clamp
+      hType = 'h'
+    } else {
+      const mid = (aX + bX) / 2 + hOffset.h2
+      const clamp = Math.max(Math.min(aX, bX) + 4, Math.min(Math.max(aX, bX) - 4, mid))
+      hx = clamp
+      hy = (aY + bY) / 2
+      hType = 'v'
+    }
+    return { d, segs: 3, mode: '3段 L型', handles: [{ type: hType, x: hx, y: hy, cls: 'hh2' }] }
+  }
+
+  // 5 段
+  // 检查 Y/X 方向重叠
+  const overlap = currentDir === 'bottom-top' || currentDir === 'top-bottom'
+    ? !(aR < bL || bR < aL)  // X overlap
+    : !(aB < bT || bB < aT)  // Y overlap
+
+  const bMidX = B.x + nodeW / 2
+  const bMidY = B.y + nodeH / 2
+  const aMidX = A.x + nodeW / 2
+  const aMidY = A.y + nodeH / 2
+
+  let vertPos  // 竖线位置（对于b-t/t-b是X，对于r-l/l-r是Y）
+  if (currentDir === 'bottom-top' || currentDir === 'top-bottom') {
+    vertPos = dir.getVertX(overlap, aMidX, bMidX, aR, bR, aL, bL, bMidX, hOffset.h3)
+  } else {
+    vertPos = dir.getVertX(overlap, aMidY, bMidY, aB, bB, aT, bT, bMidY, hOffset.h3)
+  }
+
+  let pos1, pos3, pos4
+  if (currentDir === 'bottom-top') {
+    const lowY = dir.getLowY(aY) + hOffset.h2
+    const highY = dir.getHighY(bY, aY) + hOffset.h4
+    const cl = Math.max(aY + 4, lowY)
+    const ch = Math.min(highY, cl - 10)
+    pos1 = { x: aX, y: aY }
+    pos3 = { x: aX, y: cl }
+    pos4 = { x: vertPos, y: ch }
+    pos4b = { x: bX, y: ch }
+  } else if (currentDir === 'top-bottom') {
+    const lowY = dir.getLowY(aY) + hOffset.h2
+    const highY = dir.getHighY(bY, aY) + hOffset.h4
+    const cl = Math.min(aY - 4, lowY)
+    const ch = Math.max(highY, cl + 10)
+    pos1 = { x: aX, y: aY }
+    pos3 = { x: aX, y: cl }
+    pos4 = { x: vertPos, y: ch }
+    pos4b = { x: bX, y: ch }
+  } else if (currentDir === 'right-left') {
+    const lowX = dir.getLowY(aX) + hOffset.h2
+    const highX = dir.getHighY(bX, aX) + hOffset.h4
+    const cl = Math.max(aX + 4, lowX)
+    const ch = Math.min(highX, cl - 10)
+    pos1 = { x: aX, y: aY }
+    pos3 = { x: cl, y: aY }
+    pos4 = { x: ch, y: vertPos }
+    pos4b = { x: ch, y: bY }
+  } else { // left-right
+    const lowX = dir.getLowY(aX) + hOffset.h2
+    const highX = dir.getHighY(bX, aX) + hOffset.h4
+    const cl = Math.min(aX - 4, lowX)
+    const ch = Math.max(highX, cl + 10)
+    pos1 = { x: aX, y: aY }
+    pos3 = { x: cl, y: aY }
+    pos4 = { x: ch, y: vertPos }
+    pos4b = { x: ch, y: bY }
+  }
+
+  // Build path based on direction
+  let d, segs = 0, pts
+  if (currentDir === 'bottom-top') {
+    pts = [
+      { x: aX, y: aY }, { x: aX, y: pos3.y },
+      { x: vertPos, y: pos3.y }, { x: vertPos, y: pos4.y },
+      { x: bX, y: pos4.y }, { x: bX, y: bY }
+    ]
+  } else if (currentDir === 'top-bottom') {
+    pts = [
+      { x: aX, y: aY }, { x: aX, y: pos3.y },
+      { x: vertPos, y: pos3.y }, { x: vertPos, y: pos4.y },
+      { x: bX, y: pos4.y }, { x: bX, y: bY }
+    ]
+  } else if (currentDir === 'right-left') {
+    pts = [
+      { x: aX, y: aY }, { x: pos3.x, y: aY },
+      { x: pos3.x, y: vertPos }, { x: pos4.x, y: vertPos },
+      { x: pos4.x, y: bY }, { x: bX, y: bY }
+    ]
+  } else {
+    pts = [
+      { x: aX, y: aY }, { x: pos3.x, y: aY },
+      { x: pos3.x, y: vertPos }, { x: pos4.x, y: vertPos },
+      { x: pos4.x, y: bY }, { x: bX, y: bY }
+    ]
+  }
+
+  let parts = [`M ${pts[0].x} ${pts[0].y}`]
+  for (let i = 1; i < pts.length; i++) {
+    const dx = Math.abs(pts[i].x - pts[i-1].x)
+    const dy = Math.abs(pts[i].y - pts[i-1].y)
+    parts.push(`L ${pts[i].x} ${pts[i].y}`)
+    if (dx > 2 || dy > 2) segs++
+  }
+  d = parts.join(' ')
+
+  // handles
+  const hPerp = 2.5 * 3, hPara = 2.5 * 8
+  const handles = []
+  // segment between pts[1]-pts[2] (horizontal for b-t/t-b, vertical for r-l/l-r)
+  const seg12 = Math.sqrt((pts[1].x-pts[2].x)**2 + (pts[1].y-pts[2].y)**2)
+  if (seg12 > 5) {
+    handles.push({ type: currentDir === 'bottom-top' || currentDir === 'top-bottom' ? 'h' : 'v', x: (pts[1].x+pts[2].x)/2, y: (pts[1].y+pts[2].y)/2, cls: 'hh2' })
+  }
+  // segment between pts[2]-pts[3] (vertical for b-t/t-b, horizontal for r-l/l-r)
+  const seg23 = Math.sqrt((pts[2].x-pts[3].x)**2 + (pts[2].y-pts[3].y)**2)
+  if (seg23 > 5) {
+    handles.push({ type: currentDir === 'bottom-top' || currentDir === 'top-bottom' ? 'v' : 'h', x: (pts[2].x+pts[3].x)/2, y: (pts[2].y+pts[3].y)/2, cls: 'hh3' })
+  }
+  // segment between pts[3]-pts[4]
+  const seg34 = Math.sqrt((pts[3].x-pts[4].x)**2 + (pts[3].y-pts[4].y)**2)
+  if (seg34 > 5) {
+    handles.push({ type: currentDir === 'bottom-top' || currentDir === 'top-bottom' ? 'h' : 'v', x: (pts[3].x+pts[4].x)/2, y: (pts[3].y+pts[4].y)/2, cls: 'hh4' })
+  }
+
+  return { d, segs, mode: '5段 U型', handles }
+}
+
+// ================================================================
+function render() {
+  while (svg.lastChild) svg.removeChild(svg.lastChild)
+
+  const { d, segs, mode, handles } = computePath()
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+  defs.innerHTML = '<marker id="ah" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto"><polygon points="4 2.5, 0 0, 0 5" fill="#ff6b6b"/></marker>'
+  svg.prepend(defs)
+
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', d)
+  path.setAttribute('stroke', '#ff6b6b'); path.setAttribute('stroke-width', 2.5)
+  path.setAttribute('fill', 'none'); path.setAttribute('marker-end', 'url(#ah)')
+  svg.appendChild(path)
+
+  // A
+  const aRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  aRect.setAttribute('x', A.x); aRect.setAttribute('y', A.y)
+  aRect.setAttribute('width', nodeW); aRect.setAttribute('height', nodeH)
+  aRect.setAttribute('rx', 8); aRect.setAttribute('fill', '#1e1e3a')
+  aRect.setAttribute('stroke', '#6c63ff'); aRect.setAttribute('stroke-width', 2)
+  svg.appendChild(aRect)
+  const aL = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  aL.setAttribute('x', A.x + nodeW/2); aL.setAttribute('y', A.y + nodeH/2 + 5)
+  aL.setAttribute('text-anchor', 'middle'); aL.setAttribute('fill', '#e0e0e0')
+  aL.setAttribute('font-size', '14')
+  aL.textContent = 'A'
+  svg.appendChild(aL)
+
+  // B
+  const bRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  bRect.setAttribute('x', B.x); bRect.setAttribute('y', B.y)
+  bRect.setAttribute('width', nodeW); bRect.setAttribute('height', nodeH)
+  bRect.setAttribute('rx', 8); bRect.setAttribute('fill', '#1e1e3a')
+  bRect.setAttribute('stroke', '#ff8844'); bRect.setAttribute('stroke-width', 3)
+  bRect.setAttribute('class', 'node-b')
+  bRect.style.cursor = 'grab'
+  svg.appendChild(bRect)
+  const bL = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  bL.setAttribute('x', B.x + nodeW/2); bL.setAttribute('y', B.y + nodeH/2 + 5)
+  bL.setAttribute('text-anchor', 'middle'); bL.setAttribute('fill', '#e0e0e0')
+  bL.setAttribute('font-size', '14')
+  bL.textContent = 'B'
+  svg.appendChild(bL)
+
+  // Dot labels
+  const dir = DIRS[currentDir]
+  const aDot = dir.aDot, bDot = dir.bDot(B)
+  ;[aDot, bDot].forEach((d, i) => {
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+    c.setAttribute('cx', d.x); c.setAttribute('cy', d.y)
+    c.setAttribute('r', 5); c.setAttribute('fill', '#6c63ff')
+    c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', 1.5)
+    svg.appendChild(c)
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    t.setAttribute('x', d.x + 8); t.setAttribute('y', d.y - 8)
+    t.setAttribute('fill', '#8a8aff'); t.setAttribute('font-size', '10')
+    t.textContent = i === 0 ? dir.aDotLabel : dir.bDotLabel
+    svg.appendChild(t)
+  })
+
+  // Handles
+  const hPerp = 2.5 * 3, hPara = 2.5 * 8
+  handles.forEach(h => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    if (h.type === 'h') {
+      el.setAttribute('x', h.x - hPara/2); el.setAttribute('y', h.y - hPerp/2)
+      el.setAttribute('width', hPara); el.setAttribute('height', hPerp)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ns-resize'
+    } else {
+      el.setAttribute('x', h.x - hPerp/2); el.setAttribute('y', h.y - hPara/2)
+      el.setAttribute('width', hPerp); el.setAttribute('height', hPara)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ew-resize'
+    }
+    el.setAttribute('fill', '#ff8844'); el.setAttribute('stroke', '#fff')
+    el.setAttribute('stroke-width', 1); el.setAttribute('opacity', '0.85')
+    el.setAttribute('class', h.cls)
+    svg.appendChild(el)
+  })
+
+  document.getElementById('bx').textContent = Math.round(B.x)
+  document.getElementById('by').textContent = Math.round(B.y)
+  document.getElementById('segCount').textContent = segs
+  document.getElementById('modeLabel').textContent = mode
+}
+
+// ================================================================
+// Events
+function getVb(cx, cy) {
+  const r = svg.getBoundingClientRect()
+  return { x: (cx - r.left) * (W / r.width), y: (cy - r.top) * (H / r.height) }
+}
+
+let dragB = false, dOffX = 0, dOffY = 0
+let dragH = null
+
+svg.addEventListener('pointerdown', (e) => {
+  const cl = e.target.getAttribute('class')
+  const vb = getVb(e.clientX, e.clientY)
+
+  if (e.target.classList.contains('node-b')) {
+    dragB = true; dOffX = vb.x - B.x; dOffY = vb.y - B.y
+    e.target.style.cursor = 'grabbing'
+    hOffset = { h2: 0, h3: 0, h4: 0 }
+    e.preventDefault(); return
+  }
+  if (cl === 'hh2' || cl === 'hh3' || cl === 'hh4') { dragH = cl; e.preventDefault() }
+})
+
+document.addEventListener('pointermove', (e) => {
+  const vb = getVb(e.clientX, e.clientY)
+  if (dragB) {
+    B.x = Math.max(20, Math.min(W - nodeW - 20, vb.x - dOffX))
+    B.y = Math.max(20, Math.min(H - nodeH - 20, vb.y - dOffY))
+    render(); e.preventDefault(); return
+  }
+  if (dragH) {
+    if (dragH === 'hh2') hOffset.h2 += ((currentDir === 'bottom-top' || currentDir === 'top-bottom') ? (e.movementY || 0) : (e.movementX || 0)) * 0.5
+    if (dragH === 'hh4') hOffset.h4 += ((currentDir === 'bottom-top' || currentDir === 'top-bottom') ? (e.movementY || 0) : (e.movementX || 0)) * 0.5
+    if (dragH === 'hh3') hOffset.h3 += ((currentDir === 'bottom-top' || currentDir === 'top-bottom') ? (e.movementX || 0) : (e.movementY || 0)) * 0.5
+    render(); e.preventDefault()
+  }
+})
+
+document.addEventListener('pointerup', () => {
+  if (dragB) { dragB = false; const el = document.querySelector('.node-b'); if (el) el.style.cursor = 'grab' }
+  dragH = null
+})
+
+// Buttons
+document.querySelectorAll('.controls button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    currentDir = btn.dataset.dir
+    hOffset = { h2: 0, h3: 0, h4: 0 }
+    render()
+  })
+})
+
+render()
+</script>
+<!-- ============================================================ -->
+<!-- Case 5: 同侧 A.t → B.t (独立隔离，不依赖上面任何代码) -->
+<!-- ============================================================ -->
+<div style="margin-top:40px;width:100%;max-width:800px;border-top:1px solid #333;padding-top:20px">
+<h2 style="font-size:16px;font-weight:400;margin-bottom:10px;color:#e0e0e0">🧪 Case 5: 同侧 A.t → B.t</h2>
+<p style="font-size:12px;color:#888;margin-bottom:8px">🖱 拖拽 <b style="color:#ff8844">节点 B</b> 移动 · 拖拽 <b style="color:#ff8844">🟠 手柄</b>微调</p>
+<div id="c5-controls" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap"></div>
+<svg id="c5-svg" width="800" height="400" style="display:block;background:#0f0f23;border-radius:8px"></svg>
+<div id="c5-info" style="margin-top:8px;font-size:13px;color:#aaa;font-family:monospace"></div>
+</div>
+<script>
+;(function(){
+const svg = document.getElementById('c5-svg')
+const W = 800, H = 400
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+
+const nodeW = 160, nodeH = 70
+const EXT = 30
+const A = { x: 320, y: 160 }
+
+let B = { x: 520, y: 160 }
+let hOff = { h2: 0, h3: 0, h4: 0 }
+
+const aDot = { x: A.x + nodeW/2, y: A.y }               // A.top
+const bDot = () => ({ x: B.x + nodeW/2, y: B.y })        // B.top
+
+function computePath() {
+  const b = bDot()
+  const aX = aDot.x, aY = aDot.y, bX = b.x, bY = b.y
+
+  const aR = A.x + nodeW, bR = B.x + nodeW
+  const aL = A.x, bL = B.x
+  const overlapX = !(aR < bL || bR < aL)
+
+  const bMidX = B.x + nodeW / 2
+
+  if (!overlapX) {
+    // 3段: 同时向上 → 水平连接
+    const topY = Math.min(aY, bY) - EXT + hOff.h2
+    const clampTop = Math.min(aY - 4, bY - 4, topY)
+    const d = `M ${aX} ${aY} L ${aX} ${clampTop} L ${bX} ${clampTop} L ${bX} ${bY}`
+    const hx = (aX + bX) / 2, hy = clampTop
+    return { d, segs: 3, mode: '3段 敞口型', handles: [{ type: 'h', x: hx, y: hy, offKey: 'h2' }] }
+  }
+
+  // 5段: X重叠 → 绕行
+  const G = 25
+  const side = bMidX >= aX ? 1 : -1  // B在中线哪侧
+  const vertX = side > 0
+    ? Math.max(aR, bR) + G + hOff.h3
+    : Math.min(aL, bL) - G + hOff.h3
+
+  let pts
+  if (bY >= aY) {
+    // B 在 A 下方：A向上→侧向→向下到两节点中间→水平→向下到B.top
+    const cl = aY - EXT + hOff.h2
+    const ch = (aY + nodeH + bY) / 2 + hOff.h4
+    pts = [
+      { x: aX, y: aY }, { x: aX, y: cl },
+      { x: vertX, y: cl }, { x: vertX, y: ch },
+      { x: bX, y: ch }, { x: bX, y: bY },
+    ]
+  } else {
+    // B 在 A 上方：A向上到两节点中间→侧向→延伸到B.top下方→水平→向上到B.top
+    const cl = (bY + nodeH + aY) / 2 + hOff.h2
+    const ch = bY - EXT + hOff.h4
+    pts = [
+      { x: aX, y: aY }, { x: aX, y: cl },
+      { x: vertX, y: cl }, { x: vertX, y: ch },
+      { x: bX, y: ch }, { x: bX, y: bY },
+    ]
+  }
+
+  const d = pts.map((p, i) => (i === 0 ? 'M' : 'L') + ` ${p.x} ${p.y}`).join(' ')
+
+  const handles = []
+  for (let i = 1; i < pts.length - 2; i++) {
+    const p1 = pts[i], p2 = pts[i+1]
+    const len = Math.sqrt((p2.x-p1.x)**2 + (p2.y-p1.y)**2)
+    if (len > 5) {
+      const isH = Math.abs(p2.y - p1.y) < Math.abs(p2.x - p1.x)
+      handles.push({ type: isH ? 'h' : 'v', x: (p1.x+p2.x)/2, y: (p1.y+p2.y)/2,
+        offKey: ['h2','h3','h4'][handles.length] })
+    }
+  }
+  return { d, segs: 5, mode: '5段 U型', handles }
+}
+
+function render() {
+  while (svg.lastChild) svg.removeChild(svg.lastChild)
+
+  const { d, segs, mode, handles } = computePath()
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+  defs.innerHTML = '<marker id="c5-ah" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto"><polygon points="4 2.5, 0 0, 0 5" fill="#ff6b6b"/></marker>'
+  svg.prepend(defs)
+
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', d)
+  path.setAttribute('stroke', '#ff6b6b'); path.setAttribute('stroke-width', 2.5)
+  path.setAttribute('fill', 'none'); path.setAttribute('marker-end', 'url(#c5-ah)')
+  svg.appendChild(path)
+
+  // A rect
+  const aRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  aRect.setAttribute('x', A.x); aRect.setAttribute('y', A.y)
+  aRect.setAttribute('width', nodeW); aRect.setAttribute('height', nodeH)
+  aRect.setAttribute('rx', 8); aRect.setAttribute('fill', '#1e1e3a')
+  aRect.setAttribute('stroke', '#6c63ff'); aRect.setAttribute('stroke-width', 2)
+  svg.appendChild(aRect)
+  const aL = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  aL.setAttribute('x', A.x + nodeW/2); aL.setAttribute('y', A.y + nodeH/2 + 5)
+  aL.setAttribute('text-anchor', 'middle'); aL.setAttribute('fill', '#e0e0e0')
+  aL.setAttribute('font-size', '14'); aL.textContent = 'A'
+  svg.appendChild(aL)
+
+  // B rect
+  const bRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  bRect.setAttribute('x', B.x); bRect.setAttribute('y', B.y)
+  bRect.setAttribute('width', nodeW); bRect.setAttribute('height', nodeH)
+  bRect.setAttribute('rx', 8); bRect.setAttribute('fill', '#1e1e3a')
+  bRect.setAttribute('stroke', '#ff8844'); bRect.setAttribute('stroke-width', 3)
+  bRect.setAttribute('class', 'node-b')
+  bRect.style.cursor = 'grab'
+  svg.appendChild(bRect)
+  const bL = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  bL.setAttribute('x', B.x + nodeW/2); bL.setAttribute('y', B.y + nodeH/2 + 5)
+  bL.setAttribute('text-anchor', 'middle'); bL.setAttribute('fill', '#e0e0e0')
+  bL.setAttribute('font-size', '14'); bL.textContent = 'B'
+  svg.appendChild(bL)
+
+  // Dots
+  const aDotEl = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+  aDotEl.setAttribute('cx', aDot.x); aDotEl.setAttribute('cy', aDot.y)
+  aDotEl.setAttribute('r', 5); aDotEl.setAttribute('fill', '#6c63ff')
+  aDotEl.setAttribute('stroke', '#fff'); aDotEl.setAttribute('stroke-width', 1.5)
+  svg.appendChild(aDotEl)
+  const aDotLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  aDotLabel.setAttribute('x', aDot.x + 8); aDotLabel.setAttribute('y', aDot.y - 8)
+  aDotLabel.setAttribute('fill', '#8a8aff'); aDotLabel.setAttribute('font-size', '10')
+  aDotLabel.textContent = 'A.t'
+  svg.appendChild(aDotLabel)
+
+  const b = bDot()
+  const bDotEl = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+  bDotEl.setAttribute('cx', b.x); bDotEl.setAttribute('cy', b.y)
+  bDotEl.setAttribute('r', 5); bDotEl.setAttribute('fill', '#6c63ff')
+  bDotEl.setAttribute('stroke', '#fff'); bDotEl.setAttribute('stroke-width', 1.5)
+  svg.appendChild(bDotEl)
+  const bDotLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  bDotLabel.setAttribute('x', b.x + 8); bDotLabel.setAttribute('y', b.y - 8)
+  bDotLabel.setAttribute('fill', '#8a8aff'); bDotLabel.setAttribute('font-size', '10')
+  bDotLabel.textContent = 'B.t'
+  svg.appendChild(bDotLabel)
+
+  // Handles
+  const hPerp = 2.5 * 3, hPara = 2.5 * 8
+  handles.forEach(h => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    if (h.type === 'h') {
+      el.setAttribute('x', h.x - hPara/2); el.setAttribute('y', h.y - hPerp/2)
+      el.setAttribute('width', hPara); el.setAttribute('height', hPerp)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ns-resize'
+    } else {
+      el.setAttribute('x', h.x - hPerp/2); el.setAttribute('y', h.y - hPara/2)
+      el.setAttribute('width', hPerp); el.setAttribute('height', hPara)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ew-resize'
+    }
+    el.setAttribute('fill', '#ff8844'); el.setAttribute('stroke', '#fff')
+    el.setAttribute('stroke-width', 1); el.setAttribute('opacity', '0.85')
+    svg.appendChild(el)
+  })
+
+  document.getElementById('c5-info').innerHTML = 'B: (' + Math.round(B.x) + ', ' + Math.round(B.y) + ') · 段数: ' + segs + ' · ' + mode
+}
+
+// Events
+function getVb(cx, cy) {
+  const r = svg.getBoundingClientRect()
+  return { x: (cx - r.left) * (W / r.width), y: (cy - r.top) * (H / r.height) }
+}
+
+let dragB = false, dOffX = 0, dOffY = 0
+let dragH = null
+
+svg.addEventListener('pointerdown', (e) => {
+  const cl = e.target.getAttribute('class')
+  const vb = getVb(e.clientX, e.clientY)
+  if (e.target.classList.contains('node-b')) {
+    dragB = true; dOffX = vb.x - B.x; dOffY = vb.y - B.y
+    e.target.style.cursor = 'grabbing'
+    hOff = { h2: 0, h3: 0, h4: 0 }
+    e.preventDefault(); return
+  }
+  if (cl === 'hh2' || cl === 'hh3' || cl === 'hh4') { dragH = cl; e.preventDefault() }
+})
+
+document.addEventListener('pointermove', (e) => {
+  const vb = getVb(e.clientX, e.clientY)
+  if (dragB) {
+    B.x = Math.max(20, Math.min(W - nodeW - 20, vb.x - dOffX))
+    B.y = Math.max(20, Math.min(H - nodeH - 20, vb.y - dOffY))
+    render(); e.preventDefault(); return
+  }
+  if (dragH) {
+    if (dragH === 'hh2') hOff.h2 += (e.movementY || 0) * 0.5
+    if (dragH === 'hh4') hOff.h4 += (e.movementY || 0) * 0.5
+    if (dragH === 'hh3') hOff.h3 += (e.movementX || 0) * 0.5
+    render(); e.preventDefault()
+  }
+})
+
+document.addEventListener('pointerup', () => {
+  if (dragB) { dragB = false; const el = document.querySelector('.node-b'); if (el) el.style.cursor = 'grab' }
+  dragH = null
+})
+
+render()
+})();
+</script>
+</body>
+</html>

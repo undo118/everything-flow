@@ -218,6 +218,7 @@ function ConnectorOverlay({ editor }) {
   const nodePositionsRef = useRef({}) // { [nodeId]: { x, y } } for detecting node movement
   const [snapGuides, setSnapGuides] = useState([]) // { axis: 'x'|'y', value: number }[]
   const snapStateRef = useRef({ snapped: false, value: 0 }) // hysteresis tracking
+  const snapHandlePositionsRef = useRef([]) // [{ axis: 'x'|'y', value: number }] for handle-to-handle snap
 
   // Compute dot positions from parent node bounds (NOT port shapes)
   // This guarantees dots are always at exact edge midpoints
@@ -404,6 +405,18 @@ function ConnectorOverlay({ editor }) {
         }
       }
       setArrowVisuals(vis)
+
+      // Collect all handle page-positions for handle-to-handle snap
+      const allHandlePos = []
+      for (const a of vis) {
+        if (a.route && a.route.handles) {
+          for (const h of a.route.handles) {
+            const axis = h.type === 'h' ? 'y' : 'x'
+            allHandlePos.push({ axis, value: h[axis], key: a.key })
+          }
+        }
+      }
+      snapHandlePositionsRef.current = allHandlePos
 
       // ---- Compute scrollbar for selected node ----
       let sbInfo = null
@@ -615,23 +628,26 @@ function ConnectorOverlay({ editor }) {
                     targets.push(nb.x, nb.x + nb.w / 2, nb.x + nb.w)
                   }
                 }
-                // Snap with hysteresis: 10px to engage, 14px to break free
+                // Add other handle positions as snap targets
+                for (const hp of snapHandlePositionsRef.current) {
+                  if (hp.axis === axis && hp.key !== drag.connKey) {
+                    targets.push(hp.value)
+                  }
+                }
+                // During drag: only show guide lines, no offset snapping
                 let closest = null, minDist = Infinity
-                const threshold = snapStateRef.current.snapped ? 14 : 10
                 for (const tVal of targets) {
                   const dist = Math.abs(tVal - handleVal)
-                  if (dist < minDist && dist < threshold) {
+                  if (dist < minDist && dist < 12) {
                     minDist = dist; closest = tVal
                   }
                 }
                 if (closest !== null) {
-                  const snapDelta = closest - handleVal
-                  offs[drag.offKey] = (offs[drag.offKey] || 0) + snapDelta
-                  snapStateRef.current = { snapped: true, value: closest }
+                  // Store snap target for release-time snapping
+                  drag.snapTarget = closest
                   setSnapGuides([{ axis, value: closest }])
-                  if (updateRef.current) updateRef.current()
                 } else {
-                  snapStateRef.current = { snapped: false, value: 0 }
+                  drag.snapTarget = null
                   setSnapGuides([])
                 }
             } else {
@@ -649,7 +665,36 @@ function ConnectorOverlay({ editor }) {
       e.preventDefault()
     }
     const onHandleUp = () => {
-      if (draggingHandleRef.current) {
+      const drag = draggingHandleRef.current
+      if (drag) {
+        // Snap on release: if there's a pending snap target, apply it
+        if (drag.snapTarget != null && drag.connKey) {
+          const connKey = drag.connKey
+          const offs = handleOffsetsRef.current[connKey]
+          if (offs) {
+            const ed = window.__TLDRAW_EDITOR
+            const pageId = ed?.getCurrentPageId()
+            const conns = connectionsRef.current[pageId] || []
+            const conn = conns.find(c =>
+              c.sourceNodeId + '-' + c.sourceDotId + '-' + c.targetNodeId + '-' + c.targetDotId === connKey
+            )
+            if (conn && ed) {
+              const sBounds = ed.getShapePageBounds(conn.sourceNodeId)
+              const tBounds = ed.getShapePageBounds(conn.targetNodeId)
+              if (sBounds && tBounds) {
+                const curOffs = handleOffsetsRef.current[connKey] || { h2: 0, h3: 0, h4: 0 }
+                const route = orthogonalRoute(sBounds, tBounds, conn.sourceDotId, conn.targetDotId, curOffs)
+                const snappedHandle = route.handles.find(h => h.offKey === drag.offKey)
+                if (snappedHandle) {
+                  const axis = drag.handleType === 'h' ? 'y' : 'x'
+                  const snapDelta = drag.snapTarget - snappedHandle[axis]
+                  offs[drag.offKey] = (offs[drag.offKey] || 0) + snapDelta
+                }
+              }
+            }
+          }
+          if (updateRef.current) updateRef.current()
+        }
         draggingHandleRef.current = null
         document.body.style.cursor = ''
       }

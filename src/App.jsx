@@ -217,6 +217,7 @@ function ConnectorOverlay({ editor }) {
   const [selectedArrowKey, setSelectedArrowKey] = useState(null)
   const nodePositionsRef = useRef({}) // { [nodeId]: { x, y } } for detecting node movement
   const [snapGuides, setSnapGuides] = useState([]) // { axis: 'x'|'y', value: number }[]
+  const snapStateRef = useRef({ snapped: false, value: 0 }) // hysteresis tracking
 
   // Compute dot positions from parent node bounds (NOT port shapes)
   // This guarantees dots are always at exact edge midpoints
@@ -598,40 +599,41 @@ function ConnectorOverlay({ editor }) {
             const curOffs = handleOffsetsRef.current[drag.connKey] || { h2: 0, h3: 0, h4: 0 }
             const route = orthogonalRoute(sBounds, tBounds, conn.sourceDotId, conn.targetDotId, curOffs)
             const snappedHandle = route.handles.find(h => h.offKey === drag.offKey)
-            if (snappedHandle) {
-              const SNAP_THRESHOLD = 8
-              const axis = drag.handleType === 'h' ? 'y' : 'x'
-              const handleVal = snappedHandle[axis]
-              const targets = []
-              // Collect snap targets from all main flow-nodes on the page
-              const allShapes = ed.store.allRecords().filter(r => r.typeName === 'shape')
-              const flowNodes = allShapes.filter(s => s.type === 'flow-node' && !s.props?.isPort)
-              for (const node of flowNodes) {
-                const nb = ed.getShapePageBounds(node.id)
-                if (!nb) continue
-                if (axis === 'y') {
-                  targets.push(nb.y, nb.y + nb.h / 2, nb.y + nb.h)
+              if (snappedHandle) {
+                const axis = drag.handleType === 'h' ? 'y' : 'x'
+                const handleVal = snappedHandle[axis]
+                const targets = []
+                // Collect snap targets from all main flow-nodes on the page
+                const allShapes = ed.store.allRecords().filter(r => r.typeName === 'shape')
+                const flowNodes = allShapes.filter(s => s.type === 'flow-node' && !s.props?.isPort)
+                for (const node of flowNodes) {
+                  const nb = ed.getShapePageBounds(node.id)
+                  if (!nb) continue
+                  if (axis === 'y') {
+                    targets.push(nb.y, nb.y + nb.h / 2, nb.y + nb.h)
+                  } else {
+                    targets.push(nb.x, nb.x + nb.w / 2, nb.x + nb.w)
+                  }
+                }
+                // Snap with hysteresis: 10px to engage, 14px to break free
+                let closest = null, minDist = Infinity
+                const threshold = snapStateRef.current.snapped ? 14 : 10
+                for (const tVal of targets) {
+                  const dist = Math.abs(tVal - handleVal)
+                  if (dist < minDist && dist < threshold) {
+                    minDist = dist; closest = tVal
+                  }
+                }
+                if (closest !== null) {
+                  const snapDelta = closest - handleVal
+                  offs[drag.offKey] = (offs[drag.offKey] || 0) + snapDelta
+                  snapStateRef.current = { snapped: true, value: closest }
+                  setSnapGuides([{ axis, value: closest }])
+                  if (updateRef.current) updateRef.current()
                 } else {
-                  targets.push(nb.x, nb.x + nb.w / 2, nb.x + nb.w)
+                  snapStateRef.current = { snapped: false, value: 0 }
+                  setSnapGuides([])
                 }
-              }
-              let closest = null, minDist = Infinity
-              for (const tVal of targets) {
-                const dist = Math.abs(tVal - handleVal)
-                if (dist < minDist && dist < SNAP_THRESHOLD / cam.z) {
-                  minDist = dist; closest = tVal
-                }
-              }
-              if (closest !== null) {
-                const snapDelta = (closest - handleVal) * cam.z * (1 / scale) * (1 / sensitivity)
-                offs[drag.offKey] = (offs[drag.offKey] || 0) + snapDelta
-                // Show guide
-                const guide = { axis, value: closest }
-                setSnapGuides([guide])
-                if (updateRef.current) updateRef.current()
-              } else {
-                setSnapGuides([])
-              }
             } else {
               setSnapGuides([])
             }
@@ -652,6 +654,7 @@ function ConnectorOverlay({ editor }) {
         document.body.style.cursor = ''
       }
       setSnapGuides([])
+      snapStateRef.current = { snapped: false, value: 0 }
       lastClientY = 0
       lastClientX = 0
     }

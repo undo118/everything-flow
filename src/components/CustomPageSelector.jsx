@@ -121,19 +121,39 @@ export default function CustomPageSelector({ ready }) {
   const handleDuplicatePage = useCallback((pageId) => {
     const editor = getEditor()
     if (!editor) return
-    // Save source page connections before duplicate
+    // Save source page: flow-node IDs (in order) + connections
+    const oldNodeIds = (editor.getSortedChildIdsForParent(pageId) || [])
+      .map(id => editor.getShape(id))
+      .filter(s => s && s.type === 'flow-node' && !s.props?.isPort)
+      .map(s => s.id)
     const sourceConns = window.__getAllConnections?.()?.[pageId]
-    // Track current page IDs to detect the new one
     const oldPageIds = new Set(editor.getPages().map(p => p.id))
+
     editor.duplicatePage(pageId)
     refresh()
-    // Find the new page ID (wasn't in oldPageIds)
-    const newPages = editor.getPages()
-    const newPage = newPages.find(p => !oldPageIds.has(p.id))
-    if (newPage && sourceConns && window.__restoreConnections) {
-      // Copy connections from source page to new page
+
+    // Find new page + build idMap (same order, different IDs)
+    const newPage = editor.getPages().find(p => !oldPageIds.has(p.id))
+    if (newPage && sourceConns && sourceConns.length > 0 && window.__restoreConnections) {
+      const newNodeIds = (editor.getSortedChildIdsForParent(newPage.id) || [])
+        .map(id => editor.getShape(id))
+        .filter(s => s && s.type === 'flow-node' && !s.props?.isPort)
+        .map(s => s.id)
+      // Build ID map: oldNodeIds[i] → newNodeIds[i] (same order = same shape)
+      const idMap = {}
+      oldNodeIds.forEach((oldId, i) => {
+        if (newNodeIds[i]) idMap[oldId] = newNodeIds[i]
+      })
+      // Remap connections to use new shape IDs
+      const newConns = sourceConns.map(c => ({
+        sourceNodeId: idMap[c.sourceNodeId] || c.sourceNodeId,
+        sourceDotId: c.sourceDotId,
+        targetNodeId: idMap[c.targetNodeId] || c.targetNodeId,
+        targetDotId: c.targetDotId,
+        mode: c.mode || 'orthogonal',
+      }))
       const allConns = window.__getAllConnections?.() || {}
-      allConns[newPage.id] = JSON.parse(JSON.stringify(sourceConns))
+      allConns[newPage.id] = newConns
       window.__restoreConnections(allConns)
     }
   }, [refresh])

@@ -121,30 +121,32 @@ export default function CustomPageSelector({ ready }) {
   const handleDuplicatePage = useCallback((pageId) => {
     const editor = getEditor()
     if (!editor) return
-    // Save source page: flow-node IDs (in order) + connections
-    const oldNodeIds = (editor.getSortedChildIdsForParent(pageId) || [])
+    // Build position-based ID map for source page flow-nodes
+    const oldShapes = (editor.getSortedChildIdsForParent(pageId) || [])
       .map(id => editor.getShape(id))
       .filter(s => s && s.type === 'flow-node' && !s.props?.isPort)
-      .map(s => s.id)
+    const posToOldId = {}
+    for (const s of oldShapes) {
+      posToOldId[`${Math.round(s.x)},${Math.round(s.y)}`] = s.id
+    }
     const sourceConns = window.__getAllConnections?.()?.[pageId]
     const oldPageIds = new Set(editor.getPages().map(p => p.id))
 
     editor.duplicatePage(pageId)
     refresh()
 
-    // Find new page + build idMap (same order, different IDs)
+    // Find new page + build idMap by matching positions
     const newPage = editor.getPages().find(p => !oldPageIds.has(p.id))
     if (newPage && sourceConns && sourceConns.length > 0 && window.__restoreConnections) {
-      const newNodeIds = (editor.getSortedChildIdsForParent(newPage.id) || [])
+      const newShapes = (editor.getSortedChildIdsForParent(newPage.id) || [])
         .map(id => editor.getShape(id))
         .filter(s => s && s.type === 'flow-node' && !s.props?.isPort)
-        .map(s => s.id)
-      // Build ID map: oldNodeIds[i] → newNodeIds[i] (same order = same shape)
       const idMap = {}
-      oldNodeIds.forEach((oldId, i) => {
-        if (newNodeIds[i]) idMap[oldId] = newNodeIds[i]
-      })
-      // Remap connections to use new shape IDs
+      for (const s of newShapes) {
+        const key = `${Math.round(s.x)},${Math.round(s.y)}`
+        if (posToOldId[key]) idMap[posToOldId[key]] = s.id
+      }
+      // Remap connections
       const newConns = sourceConns.map(c => ({
         sourceNodeId: idMap[c.sourceNodeId] || c.sourceNodeId,
         sourceDotId: c.sourceDotId,

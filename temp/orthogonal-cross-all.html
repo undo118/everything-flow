@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>正交对角路由 — 全部 8 方向</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #e0e0e0; font-family: system-ui, sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+  h1 { margin-bottom: 4px; font-weight: 500; font-size: 18px; }
+  .note { font-size: 12px; color: #888; margin-bottom: 6px; }
+  .note b { color: #ff8844; }
+  #svg { display: block; background: #0f0f23; border-radius: 8px; cursor: default; }
+  .info { margin-top: 6px; font-size: 13px; color: #aaa; font-family: monospace; display: flex; gap: 20px; }
+  .info span { color: #ffaa44; }
+  .controls { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; justify-content: center; }
+  .controls button {
+    padding: 4px 12px; border: 1px solid #444; border-radius: 6px;
+    background: #2a2a4a; color: #e0e0e0; cursor: pointer; font-size: 12px;
+    transition: all 0.15s;
+  }
+  .controls button:hover { background: #3a3a5a; }
+  .controls button.active { background: #6c63ff; border-color: #6c63ff; color: #fff; }
+</style>
+</head>
+<body>
+
+<h1>🧩 正交对角 — 全部 8 方向</h1>
+<p class="note">🖱 拖拽 <b>B</b> 移动 · 🟠 手柄可拖</p>
+
+<div class="controls" id="case-btns"></div>
+<svg id="svg" width="800" height="600"></svg>
+<div class="info">
+  B: (<span id="bx">--</span>, <span id="by">--</span>)
+  · 段数: <span id="segCount">--</span>
+  · <span id="modeLabel">--</span>
+</div>
+
+<script>
+;(function() {
+const svg = document.getElementById('svg')
+const W = 800, H = 600
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+
+const nodeW = 160, nodeH = 70, EXT = 30
+const A = { x: 320, y: 280 }
+let B = { x: 520, y: 380 }
+let hOff = { h2: 0, h3: 0 }
+
+// ---- All 8 cross-direction cases ----
+const CASES = {
+  'top-left':     { label: 'A.t → B.l', sDot: 'top', tDot: 'left' },
+  'top-right':    { label: 'A.t → B.r', sDot: 'top', tDot: 'right' },
+  'bottom-left':  { label: 'A.b → B.l', sDot: 'bottom', tDot: 'left' },
+  'bottom-right': { label: 'A.b → B.r', sDot: 'bottom', tDot: 'right' },
+  'left-top':     { label: 'A.l → B.t', sDot: 'left', tDot: 'top' },
+  'left-bottom':  { label: 'A.l → B.b', sDot: 'left', tDot: 'bottom' },
+  'right-top':    { label: 'A.r → B.t', sDot: 'right', tDot: 'top' },
+  'right-bottom': { label: 'A.r → B.b', sDot: 'right', tDot: 'bottom' },
+}
+let currentCase = 'top-left'
+
+function edgeCenter(bounds, dotId) {
+  switch (dotId) {
+    case 'top':    return { x: bounds.x + bounds.w / 2, y: bounds.y }
+    case 'bottom': return { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h }
+    case 'left':   return { x: bounds.x,                y: bounds.y + bounds.h / 2 }
+    case 'right':  return { x: bounds.x + bounds.w,     y: bounds.y + bounds.h / 2 }
+  }
+}
+
+// ---- Generic cross-direction router ----
+function computeCrossDir(aB, bB, sDot, tDot, off) {
+  const h2 = off.h2 || 0, h3 = off.h3 || 0
+  const aDot = edgeCenter(aB, sDot), bDot = edgeCenter(bB, tDot)
+  const aX = aDot.x, aY = aDot.y, bX = bDot.x, bY = bDot.y
+
+  const aL = aB.x, aR = aB.x + aB.w, aT = aB.y, aBtm = aB.y + aB.h
+  const bL = bB.x, bR = bB.x + bB.w, bT = bB.y, bBtm = bB.y + bB.h
+
+  const isSrcVert = sDot === 'top' || sDot === 'bottom'
+  const emitUp = sDot === 'top', emitDown = sDot === 'bottom'
+  const emitLeft = sDot === 'left', emitRight = sDot === 'right'
+  const tgtLeft = tDot === 'left', tgtRight = tDot === 'right'
+  const tgtTop = tDot === 'top', tgtBottom = tDot === 'bottom'
+
+  // ---- 2-segment degenerate (only if both segments are meaningful) ----
+  const MIN_2SEG = 10
+  let isDeg2 = false
+  let deg2Pts = null
+
+  if (emitUp && bY < aY && tgtLeft) {  // top→left
+    const seg1 = Math.abs(aY - bY), seg2 = Math.abs(aX - bX)
+    if (aX < bX && seg1 > MIN_2SEG && seg2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{ x: aX, y: aY }, { x: aX, y: bY }, { x: bX, y: bY }] }
+  } else if (emitUp && bY < aY && tgtRight) {  // top→right
+    const seg1 = Math.abs(aY - bY), seg2 = Math.abs(aX - bX)
+    if (aX > bX && seg1 > MIN_2SEG && seg2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{ x: aX, y: aY }, { x: aX, y: bY }, { x: bX, y: bY }] }
+  } else if (emitDown && bY > aY && tgtLeft) {  // bottom→left
+    const seg1 = Math.abs(aY - bY), seg2 = Math.abs(aX - bX)
+    if (aX < bX && seg1 > MIN_2SEG && seg2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{ x: aX, y: aY }, { x: aX, y: bY }, { x: bX, y: bY }] }
+  } else if (emitDown && bY > aY && tgtRight) {  // bottom→right
+    const seg1 = Math.abs(aY - bY), seg2 = Math.abs(aX - bX)
+    if (aX > bX && seg1 > MIN_2SEG && seg2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{ x: aX, y: aY }, { x: aX, y: bY }, { x: bX, y: bY }] }
+  } else if (emitLeft && bX < aX && tgtTop) {  // left→top
+    const seg1 = Math.abs(aX - bX), seg2 = Math.abs(aY - bY)
+    if (aY < bY && seg1 > MIN_2SEG && seg2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{ x: aX, y: aY }, { x: bX, y: aY }, { x: bX, y: bY }] }
+  } else if (emitLeft && bX < aX && tgtBottom) {  // left→bottom
+    const seg1 = Math.abs(aX - bX), seg2 = Math.abs(aY - bY)
+    if (aY > bY && seg1 > MIN_2SEG && seg2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{ x: aX, y: aY }, { x: bX, y: aY }, { x: bX, y: bY }] }
+  } else if (emitRight && bX > aX && tgtTop) {  // right→top
+    const seg1 = Math.abs(aX - bX), seg2 = Math.abs(aY - bY)
+    if (aY < bY && seg1 > MIN_2SEG && seg2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{ x: aX, y: aY }, { x: bX, y: aY }, { x: bX, y: bY }] }
+  } else if (emitRight && bX > aX && tgtBottom) {  // right→bottom
+    const seg1 = Math.abs(aX - bX), seg2 = Math.abs(aY - bY)
+    if (aY > bY && seg1 > MIN_2SEG && seg2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{ x: aX, y: aY }, { x: bX, y: aY }, { x: bX, y: bY }] }
+  }
+
+  if (isDeg2) {
+    return { d: deg2Pts.map((p,i)=>(i===0?'M':'L')+` ${p.x} ${p.y}`).join(' '), segs: 2, mode: '2段 直连', pts: deg2Pts, handles: [] }
+  }
+
+  // ---- 4-segment routing ----
+  let pt2, pt3  // pt2 = intermediate point after 1st turn, pt3 = before last turn
+
+  if (isSrcVert) {
+    // Source vertical → target horizontal
+    // ① vertical (Y), ② horizontal (X), ③ vertical (Y), ④ horizontal into target
+
+    // pt2 Y: height of horizontal segment
+    let pt2_y
+    if (emitUp) {
+      if (bBtm <= aT) pt2_y = (aT + bBtm) / 2 + h2        // B entirely above A
+      else pt2_y = Math.min(aT, bT) - EXT + h2            // B below A's top
+      if (pt2_y > aT - 4) pt2_y = aT - 4                  // must go up
+    } else {
+      if (bT >= aBtm) pt2_y = (aBtm + bT) / 2 + h2        // B entirely below A
+      else pt2_y = Math.max(aBtm, bBtm) + EXT + h2        // B above A's bottom
+      if (pt2_y < aBtm + 4) pt2_y = aBtm + 4              // must go down
+    }
+
+    // pt3 X: position of vertical segment
+    let pt3_x
+    if (tgtLeft) {
+      // Last seg goes RIGHT → pt3_x < bL
+      if (bL > aR) pt3_x = (aR + bL) / 2 + h3             // B fully right
+      else pt3_x = Math.min(aL, bL) - EXT + h3            // overlap or B left
+      if (pt3_x >= bL) pt3_x = bL - EXT
+    } else {
+      // Last seg goes LEFT → pt3_x > bR
+      if (bR < aL) pt3_x = (aL + bR) / 2 + h3             // B fully left
+      else pt3_x = Math.max(aR, bR) + EXT + h3            // overlap or B right
+      if (pt3_x <= bR) pt3_x = bR + EXT
+    }
+
+    pt2 = { x: aX, y: pt2_y }
+    pt3 = { x: pt3_x, y: bY }
+  } else {
+    // Source horizontal → target vertical
+    // ① horizontal (X), ② vertical (Y), ③ horizontal (X), ④ vertical into target
+
+    // pt2 X: position of vertical segment
+    let pt2_x
+    if (emitLeft) {
+      if (bR <= aL) pt2_x = (aL + bR) / 2 + h2            // B entirely left
+      else pt2_x = Math.min(aL, bL) - EXT + h2            // B right of A's left
+      if (pt2_x >= aL) pt2_x = aL - EXT                   // ensure left of A
+    } else {
+      if (bL >= aR) pt2_x = (aR + bL) / 2 + h2            // B entirely right
+      else pt2_x = Math.max(aR, bR) + EXT + h2            // B left of A's right
+      if (pt2_x <= aR) pt2_x = aR + EXT                   // ensure right of A
+    }
+
+    // pt3 Y: position of horizontal segment (vertical entry to target)
+    let pt3_y
+    if (tgtTop) {
+      // Last seg goes DOWN into B.top → pt3_y < bY (above B.top)
+      if (bT > aBtm) {
+        // B fully below A: put pt3_y between A.bottom and B.top
+        pt3_y = (aBtm + bT) / 2 + h3
+        if (pt3_y <= aBtm) pt3_y = aBtm + EXT    // below A
+        if (pt3_y >= bT) pt3_y = bT - EXT        // above B.top
+      } else {
+        // B overlaps or above A: put pt3_y above BOTH (entry from above)
+        pt3_y = Math.min(aT, bT) - EXT + h3
+        if (pt3_y >= bT) pt3_y = bT - EXT
+      }
+    } else {
+      // Last seg goes UP into B.bottom → pt3_y > bY (below B.bottom)
+      if (bBtm < aT) {
+        // B fully above A: put pt3_y between B.bottom and A.top
+        pt3_y = (aT + bBtm) / 2 + h3
+        if (pt3_y >= aT) pt3_y = aT - EXT        // above A.top
+        if (pt3_y <= bBtm) pt3_y = bBtm + EXT    // below B.bottom
+      } else {
+        // B overlaps or below A: put pt3_y below BOTH (entry from below)
+        pt3_y = Math.max(aBtm, bBtm) + EXT + h3
+        if (pt3_y <= bBtm) pt3_y = bBtm + EXT
+      }
+    }
+
+    pt2 = { x: pt2_x, y: aY }
+    pt3 = { x: bX, y: pt3_y }
+  }
+
+  const pts = [
+    { x: aX, y: aY },
+    { x: pt2.x, y: pt2.y },
+    isSrcVert
+      ? { x: pt3.x, y: pt2.y }   // ②→③: horizontal
+      : { x: pt2.x, y: pt3.y },  // ②→③: vertical
+    { x: pt3.x, y: pt3.y },
+    { x: bX, y: bY },
+  ]
+
+  const d = pts.map((p, i) => (i === 0 ? 'M' : 'L') + ` ${p.x} ${p.y}`).join(' ')
+
+  // Handles
+  const handles = []
+  const seg2len = Math.abs(isSrcVert ? (pts[2].x - pts[1].x) : (pts[2].y - pts[1].y))
+  if (seg2len > 5) {
+    const isH = isSrcVert  // for srcVert, seg② is horizontal → type 'h'
+    handles.push({ type: isH ? 'h' : 'v', x: (pts[1].x+pts[2].x)/2, y: (pts[1].y+pts[2].y)/2, cls: 'hh2' })
+  }
+  const seg3len = Math.abs(isSrcVert ? (pts[3].y - pts[2].y) : (pts[3].x - pts[2].x))
+  if (seg3len > 5) {
+    const isH = !isSrcVert  // for srcVert, seg③ is vertical → type 'v'
+    handles.push({ type: isH ? 'h' : 'v', x: (pts[2].x+pts[3].x)/2, y: (pts[2].y+pts[3].y)/2, cls: 'hh3' })
+  }
+
+  let segCount = 0
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dx = Math.abs(pts[i+1].x - pts[i].x), dy = Math.abs(pts[i+1].y - pts[i].y)
+    if (dx > 2 || dy > 2) segCount++
+  }
+
+  return { d, segs: segCount, mode: segCount === 2 ? '2段 直连' : (isSrcVert ? '上→右/左→下→右/左' : '左/右→下→左/右→下'), pts, handles }
+}
+
+// ================================================================
+function render() {
+  while (svg.lastChild) svg.removeChild(svg.lastChild)
+
+  const c = CASES[currentCase]
+  const { d, segs, mode, pts, handles } = computeCrossDir(
+    { x: A.x, y: A.y, w: nodeW, h: nodeH },
+    { x: B.x, y: B.y, w: nodeW, h: nodeH },
+    c.sDot, c.tDot, hOff
+  )
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+  defs.innerHTML = '<marker id="ah" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto"><polygon points="4 2.5, 0 0, 0 5" fill="#ff6b6b"/></marker>'
+  svg.prepend(defs)
+
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', d)
+  path.setAttribute('stroke', '#ff6b6b'); path.setAttribute('stroke-width', 2.5)
+  path.setAttribute('fill', 'none'); path.setAttribute('marker-end', 'url(#ah)')
+  svg.appendChild(path)
+
+  // Segment labels
+  const segLabels = ['①', '②', '③', '④', '⑤']
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p1 = pts[i], p2 = pts[i+1]
+    const dx = Math.abs(p2.x - p1.x), dy = Math.abs(p2.y - p1.y)
+    if (dx > 3 || dy > 3) {
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      label.setAttribute('x', (p1.x + p2.x) / 2 + 10)
+      label.setAttribute('y', (p1.y + p2.y) / 2 - 6)
+      label.setAttribute('fill', '#ff6b6b')
+      label.setAttribute('font-size', '11')
+      label.setAttribute('opacity', '0.6')
+      label.textContent = segLabels[i] || ''
+      svg.appendChild(label)
+    }
+  }
+
+  // A node
+  const aRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  aRect.setAttribute('x', A.x); aRect.setAttribute('y', A.y)
+  aRect.setAttribute('width', nodeW); aRect.setAttribute('height', nodeH)
+  aRect.setAttribute('rx', 8); aRect.setAttribute('fill', '#1e1e3a')
+  aRect.setAttribute('stroke', '#6c63ff'); aRect.setAttribute('stroke-width', 2)
+  svg.appendChild(aRect)
+  const aText = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  aText.setAttribute('x', A.x + nodeW/2); aText.setAttribute('y', A.y + nodeH/2 + 5)
+  aText.setAttribute('text-anchor', 'middle'); aText.setAttribute('fill', '#e0e0e0')
+  aText.setAttribute('font-size', '14')
+  aText.textContent = 'A'
+  svg.appendChild(aText)
+
+  // Source dot
+  const sDot = edgeCenter({ x: A.x, y: A.y, w: nodeW, h: nodeH }, c.sDot)
+  const sDotC = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+  sDotC.setAttribute('cx', sDot.x); sDotC.setAttribute('cy', sDot.y)
+  sDotC.setAttribute('r', 5); sDotC.setAttribute('fill', '#6c63ff')
+  sDotC.setAttribute('stroke', '#fff'); sDotC.setAttribute('stroke-width', 1.5)
+  svg.appendChild(sDotC)
+
+  // B node
+  const bRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  bRect.setAttribute('x', B.x); bRect.setAttribute('y', B.y)
+  bRect.setAttribute('width', nodeW); bRect.setAttribute('height', nodeH)
+  bRect.setAttribute('rx', 8); bRect.setAttribute('fill', '#1e1e3a')
+  bRect.setAttribute('stroke', '#ff8844'); bRect.setAttribute('stroke-width', 3)
+  bRect.setAttribute('class', 'node-b')
+  bRect.style.cursor = 'grab'
+  svg.appendChild(bRect)
+  const bText = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  bText.setAttribute('x', B.x + nodeW/2); bText.setAttribute('y', B.y + nodeH/2 + 5)
+  bText.setAttribute('text-anchor', 'middle'); bText.setAttribute('fill', '#e0e0e0')
+  bText.setAttribute('font-size', '14')
+  bText.textContent = 'B'
+  svg.appendChild(bText)
+
+  // Target dot
+  const tDot = edgeCenter({ x: B.x, y: B.y, w: nodeW, h: nodeH }, c.tDot)
+  const tDotC = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+  tDotC.setAttribute('cx', tDot.x); tDotC.setAttribute('cy', tDot.y)
+  tDotC.setAttribute('r', 5); tDotC.setAttribute('fill', '#6c63ff')
+  tDotC.setAttribute('stroke', '#fff'); tDotC.setAttribute('stroke-width', 1.5)
+  svg.appendChild(tDotC)
+
+  // Target entry direction indicator
+  const entryDir = { left: ['right', 1, 0], right: ['left', -1, 0], top: ['down', 0, 1], bottom: ['up', 0, -1] }[c.tDot]
+  if (entryDir) {
+    const [_, dx, dy] = entryDir
+    const len = 20
+    const ex = tDot.x - dx * len, ey = tDot.y - dy * len
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+    line.setAttribute('x1', tDot.x); line.setAttribute('y1', tDot.y)
+    line.setAttribute('x2', ex); line.setAttribute('y2', ey)
+    line.setAttribute('stroke', '#6c63ff'); line.setAttribute('stroke-width', 1.5)
+    line.setAttribute('opacity', '0.4'); line.setAttribute('stroke-dasharray', '3,2')
+    svg.appendChild(line)
+  }
+
+  // Handles
+  const hPerp = 2.5 * 3, hPara = 2.5 * 8
+  handles.forEach(h => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    if (h.type === 'h') {
+      el.setAttribute('x', h.x - hPara/2); el.setAttribute('y', h.y - hPerp/2)
+      el.setAttribute('width', hPara); el.setAttribute('height', hPerp)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ns-resize'
+    } else {
+      el.setAttribute('x', h.x - hPerp/2); el.setAttribute('y', h.y - hPara/2)
+      el.setAttribute('width', hPerp); el.setAttribute('height', hPara)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ew-resize'
+    }
+    el.setAttribute('fill', '#ff8844'); el.setAttribute('stroke', '#fff')
+    el.setAttribute('stroke-width', 1); el.setAttribute('opacity', '0.85')
+    el.setAttribute('class', h.cls)
+    svg.appendChild(el)
+  })
+
+  document.getElementById('bx').textContent = Math.round(B.x)
+  document.getElementById('by').textContent = Math.round(B.y)
+  document.getElementById('segCount').textContent = segs
+  document.getElementById('modeLabel').textContent = mode
+}
+
+// ---- Case buttons ----
+const btnContainer = document.getElementById('case-btns')
+for (const [key, c] of Object.entries(CASES)) {
+  const btn = document.createElement('button')
+  btn.textContent = c.label
+  btn.dataset.case = key
+  if (key === currentCase) btn.classList.add('active')
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#case-btns button').forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    currentCase = key
+    hOff = { h2: 0, h3: 0 }
+    render()
+  })
+  btnContainer.appendChild(btn)
+}
+
+// ---- Drag ----
+function getVb(cx, cy) {
+  const r = svg.getBoundingClientRect()
+  return { x: (cx - r.left) * (W / r.width), y: (cy - r.top) * (H / r.height) }
+}
+
+let dragB = false, dOffX = 0, dOffY = 0, dragH = null
+
+svg.addEventListener('pointerdown', (e) => {
+  const cl = e.target.getAttribute('class')
+  const vb = getVb(e.clientX, e.clientY)
+
+  if (e.target.classList.contains('node-b')) {
+    dragB = true; dOffX = vb.x - B.x; dOffY = vb.y - B.y
+    e.target.style.cursor = 'grabbing'
+    hOff = { h2: 0, h3: 0 }
+    e.preventDefault(); return
+  }
+  if (cl === 'hh2' || cl === 'hh3') { dragH = cl; e.preventDefault() }
+})
+
+document.addEventListener('pointermove', (e) => {
+  if (dragB) {
+    const vb = getVb(e.clientX, e.clientY)
+    B.x = Math.max(20, Math.min(W - nodeW - 20, vb.x - dOffX))
+    B.y = Math.max(20, Math.min(H - nodeH - 20, vb.y - dOffY))
+    render(); e.preventDefault(); return
+  }
+  if (dragH) {
+    const isVertSrc = CASES[currentCase].sDot === 'top' || CASES[currentCase].sDot === 'bottom'
+    if (dragH === 'hh2') {
+      if (isVertSrc) hOff.h2 += ((e.movementY || 0) * 0.5)
+      else hOff.h2 += ((e.movementX || 0) * 0.5)
+    }
+    if (dragH === 'hh3') {
+      if (isVertSrc) hOff.h3 += ((e.movementX || 0) * 0.5)
+      else hOff.h3 += ((e.movementY || 0) * 0.5)
+    }
+    render(); e.preventDefault()
+  }
+})
+
+document.addEventListener('pointerup', () => {
+  if (dragB) { dragB = false; const el = document.querySelector('.node-b'); if (el) el.style.cursor = 'grab' }
+  dragH = null
+})
+
+render()
+})();
+</script>
+</body>
+</html>

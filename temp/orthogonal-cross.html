@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>正交对角路由 — A.top → B.left (v2)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #e0e0e0; font-family: system-ui, sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+  h1 { margin-bottom: 6px; font-weight: 500; font-size: 18px; }
+  .note { font-size: 12px; color: #888; margin-bottom: 10px; }
+  .note b { color: #ff8844; }
+  #svg { display: block; background: #0f0f23; border-radius: 8px; cursor: default; }
+  .info { margin-top: 10px; font-size: 13px; color: #aaa; font-family: monospace; display: flex; gap: 20px; }
+  .info span { color: #ffaa44; }
+</style>
+</head>
+<body>
+
+<h1>🧩 正交对角 Case 1: A.top → B.left (v2)</h1>
+<p class="note">🖱 拖拽 <b>B</b> 移动 · 🟠 手柄可拖</p>
+
+<svg id="svg" width="800" height="600"></svg>
+<div class="info">
+  B: (<span id="bx">--</span>, <span id="by">--</span>)
+  · 段数: <span id="segCount">--</span>
+  · <span id="modeLabel">--</span>
+</div>
+
+<script>
+;(function() {
+const svg = document.getElementById('svg')
+const W = 800, H = 600
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+
+const nodeW = 160, nodeH = 70
+const EXT = 30
+const A = { x: 320, y: 280 }
+
+let B = { x: 520, y: 380 }
+let hOff = { h2: 0, h3: 0 }
+
+/**
+ * A.top → B.left 正交路径（处理退化和绕行）
+ *
+ * 退化条件（2段）：
+ *   B 在 A 上方 (bY < aY) 且 B 在 A 右侧 (aX < bX)
+ *   → A.top → ↑ 到 B.left 的 Y → → 进 B.left
+ *
+ * 4段绕行条件（其他）：
+ *   ① A.top → ↑ 高过两个节点顶部
+ *   ② → 水平到 B.left 左侧（避开 A 的 X 范围）
+ *   ③ → 垂直下到 B.left 的 Y
+ *   ④ → 水平向右进 B.left
+ */
+function computeTopLeft(aB, bB, off) {
+  const h2 = off.h2 || 0, h3 = off.h3 || 0
+
+  const aX = aB.x + aB.w / 2   // A.top.x
+  const aY = aB.y               // A.top.y
+  const bX = bB.x               // B.left.x
+  const bY = bB.y + bB.h / 2    // B.left.y
+
+  const aTopY = aB.y
+  const bBottomY = bB.y + bB.h
+
+  let pt2_y, pt3_x
+
+  // ─── 退化：2段 ───
+  // B 在 A 上方且右侧 → 直接 A.top → ↑ → → 进 B.left
+  if (bY < aY && aX < bX) {
+    const pts = [
+      { x: aX, y: aY },
+      { x: aX, y: bY },   // B 的 Y 水平
+      { x: bX, y: bY },
+    ]
+    const d = pts.map((p, i) => (i === 0 ? 'M' : 'L') + ` ${p.x} ${p.y}`).join(' ')
+    return { d, segs: 2, mode: '2段 直连', pts, handles: [] }
+  }
+
+  // ─── B 底部在 A 顶部之上（Bb.y <= At.y）───
+  // 水平段在 (At.y + Bb.y) / 2
+  if (bBottomY <= aTopY) {
+    pt2_y = Math.min((aY + bBottomY) / 2 + h2, aY - 4)
+    pt3_x = bX - EXT + h3
+    if (pt3_x > aB.x && pt3_x < aB.x + aB.w) {
+      pt3_x = aB.x - EXT
+    }
+  }
+
+  // ─── B 底部在 A 顶部之下（Bb.y > At.y）───
+  else {
+    const aR = aB.x + aB.w
+    const bL = bB.x
+    pt2_y = Math.min(aB.y, bB.y) - EXT + h2
+
+    if (bL > aR) {
+      // B 在 A 右侧无重叠 → "上右下去"
+      // 垂直段在两节点中间
+      pt3_x = (aR + bL) / 2 + h3
+    } else {
+      // B 与 A 有 X 重叠或 B 在左侧 → "上左下右"
+      pt3_x = Math.min(aB.x, bB.x) - EXT + h3
+    }
+  }
+
+  // 确保 pt3_x < bX（从左侧进 B.left）
+  if (pt3_x >= bX) pt3_x = bX - EXT
+
+  // 5 个点
+  const pts = [
+    { x: aX, y: aY },        // 0: A.top
+    { x: aX, y: pt2_y },     // 1: ↑ 向上
+    { x: pt3_x, y: pt2_y },  // 2: → 水平
+    { x: pt3_x, y: bY },     // 3: ↓ 垂直
+    { x: bX, y: bY },        // 4: B.left
+  ]
+
+  const d = pts.map((p, i) => (i === 0 ? 'M' : 'L') + ` ${p.x} ${p.y}`).join(' ')
+
+  // 手柄：只在中间段（②和③）上有
+  const handles = []
+  const seg2len = Math.abs(pts[2].x - pts[1].x)
+  if (seg2len > 5) {
+    handles.push({ type: 'h', x: (pts[1].x+pts[2].x)/2, y: (pts[1].y+pts[2].y)/2, cls: 'hh2' })
+  }
+  const seg3len = Math.abs(pts[3].y - pts[2].y)
+  if (seg3len > 5) {
+    handles.push({ type: 'v', x: (pts[2].x+pts[3].x)/2, y: (pts[2].y+pts[3].y)/2, cls: 'hh3' })
+  }
+
+  let segCount = 0
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dx = Math.abs(pts[i+1].x - pts[i].x)
+    const dy = Math.abs(pts[i+1].y - pts[i].y)
+    if (dx > 2 || dy > 2) segCount++
+  }
+
+  return { d, segs: segCount, mode: '4段 对角', pts, handles }
+}
+
+// ================================================================
+function render() {
+  while (svg.lastChild) svg.removeChild(svg.lastChild)
+
+  const aB = { x: A.x, y: A.y, w: nodeW, h: nodeH }
+  const bB = { x: B.x, y: B.y, w: nodeW, h: nodeH }
+  const { d, segs, mode, pts, handles } = computeTopLeft(aB, bB, hOff)
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+  defs.innerHTML = '<marker id="ah" markerWidth="4" markerHeight="5" refX="4" refY="2.5" orient="auto"><polygon points="4 2.5, 0 0, 0 5" fill="#ff6b6b"/></marker>'
+  svg.prepend(defs)
+
+  // Path
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', d)
+  path.setAttribute('stroke', '#ff6b6b'); path.setAttribute('stroke-width', 2.5)
+  path.setAttribute('fill', 'none'); path.setAttribute('marker-end', 'url(#ah)')
+  svg.appendChild(path)
+
+  // Segment labels
+  const segLabels = ['①', '②', '③', '④', '⑤']
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p1 = pts[i], p2 = pts[i+1]
+    const dx = Math.abs(p2.x - p1.x)
+    const dy = Math.abs(p2.y - p1.y)
+    if (dx > 3 || dy > 3) {
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      label.setAttribute('x', (p1.x + p2.x) / 2 + 10)
+      label.setAttribute('y', (p1.y + p2.y) / 2 - 6)
+      label.setAttribute('fill', '#ff6b6b')
+      label.setAttribute('font-size', '11')
+      label.setAttribute('opacity', '0.6')
+      label.textContent = segLabels[i] || ''
+      svg.appendChild(label)
+    }
+  }
+
+  // A node
+  const aRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  aRect.setAttribute('x', A.x); aRect.setAttribute('y', A.y)
+  aRect.setAttribute('width', nodeW); aRect.setAttribute('height', nodeH)
+  aRect.setAttribute('rx', 8); aRect.setAttribute('fill', '#1e1e3a')
+  aRect.setAttribute('stroke', '#6c63ff'); aRect.setAttribute('stroke-width', 2)
+  svg.appendChild(aRect)
+  const aL = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  aL.setAttribute('x', A.x + nodeW/2); aL.setAttribute('y', A.y + nodeH/2 + 5)
+  aL.setAttribute('text-anchor', 'middle'); aL.setAttribute('fill', '#e0e0e0')
+  aL.setAttribute('font-size', '14')
+  aL.textContent = 'A'
+  svg.appendChild(aL)
+
+  const aDot = { x: A.x + nodeW/2, y: A.y }
+  const aDotC = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+  aDotC.setAttribute('cx', aDot.x); aDotC.setAttribute('cy', aDot.y)
+  aDotC.setAttribute('r', 5); aDotC.setAttribute('fill', '#6c63ff')
+  aDotC.setAttribute('stroke', '#fff'); aDotC.setAttribute('stroke-width', 1.5)
+  svg.appendChild(aDotC)
+  const aT = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  aT.setAttribute('x', aDot.x + 8); aT.setAttribute('y', aDot.y - 8)
+  aT.setAttribute('fill', '#8a8aff'); aT.setAttribute('font-size', '10')
+  aT.textContent = 'A.top ↑'
+  svg.appendChild(aT)
+
+  // B node
+  const bRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  bRect.setAttribute('x', B.x); bRect.setAttribute('y', B.y)
+  bRect.setAttribute('width', nodeW); bRect.setAttribute('height', nodeH)
+  bRect.setAttribute('rx', 8); bRect.setAttribute('fill', '#1e1e3a')
+  bRect.setAttribute('stroke', '#ff8844'); bRect.setAttribute('stroke-width', 3)
+  bRect.setAttribute('class', 'node-b')
+  bRect.style.cursor = 'grab'
+  svg.appendChild(bRect)
+  const bL = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  bL.setAttribute('x', B.x + nodeW/2); bL.setAttribute('y', B.y + nodeH/2 + 5)
+  bL.setAttribute('text-anchor', 'middle'); bL.setAttribute('fill', '#e0e0e0')
+  bL.setAttribute('font-size', '14')
+  bL.textContent = 'B'
+  svg.appendChild(bL)
+
+  const bDot = { x: B.x, y: B.y + nodeH/2 }
+  const bDotC = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+  bDotC.setAttribute('cx', bDot.x); bDotC.setAttribute('cy', bDot.y)
+  bDotC.setAttribute('r', 5); bDotC.setAttribute('fill', '#6c63ff')
+  bDotC.setAttribute('stroke', '#fff'); bDotC.setAttribute('stroke-width', 1.5)
+  svg.appendChild(bDotC)
+  const bT = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  bT.setAttribute('x', bDot.x - 60); bT.setAttribute('y', bDot.y - 8)
+  bT.setAttribute('fill', '#8a8aff'); bT.setAttribute('font-size', '10')
+  bT.textContent = '← B.left'
+  svg.appendChild(bT)
+
+  // Entry direction guide
+  const entryLine = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+  entryLine.setAttribute('x1', bDot.x - 25); entryLine.setAttribute('y1', bDot.y)
+  entryLine.setAttribute('x2', bDot.x - 5); entryLine.setAttribute('y2', bDot.y)
+  entryLine.setAttribute('stroke', '#6c63ff'); entryLine.setAttribute('stroke-width', 1.5)
+  entryLine.setAttribute('opacity', '0.4')
+  entryLine.setAttribute('stroke-dasharray', '3,2')
+  svg.appendChild(entryLine)
+  const entryArrow = document.createElementNS('http://www.w3.org/2000/svg', 'polygon')
+  entryArrow.setAttribute('points', `${bDot.x-5} ${bDot.y-4} ${bDot.x-5} ${bDot.y+4} ${bDot.x} ${bDot.y}`)
+  entryArrow.setAttribute('fill', '#6c63ff')
+  entryArrow.setAttribute('opacity', '0.4')
+  svg.appendChild(entryArrow)
+
+  // Handles
+  const hPerp = 2.5 * 3, hPara = 2.5 * 8
+  handles.forEach(h => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    if (h.type === 'h') {
+      el.setAttribute('x', h.x - hPara/2); el.setAttribute('y', h.y - hPerp/2)
+      el.setAttribute('width', hPara); el.setAttribute('height', hPerp)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ns-resize'
+    } else {
+      el.setAttribute('x', h.x - hPerp/2); el.setAttribute('y', h.y - hPara/2)
+      el.setAttribute('width', hPerp); el.setAttribute('height', hPara)
+      el.setAttribute('rx', hPerp/2); el.setAttribute('ry', hPerp/2)
+      el.style.cursor = 'ew-resize'
+    }
+    el.setAttribute('fill', '#ff8844'); el.setAttribute('stroke', '#fff')
+    el.setAttribute('stroke-width', 1); el.setAttribute('opacity', '0.85')
+    el.setAttribute('class', h.cls)
+    svg.appendChild(el)
+  })
+
+  document.getElementById('bx').textContent = Math.round(B.x)
+  document.getElementById('by').textContent = Math.round(B.y)
+  document.getElementById('segCount').textContent = segs
+  document.getElementById('modeLabel').textContent = mode
+}
+
+// ================================================================
+function getVb(cx, cy) {
+  const r = svg.getBoundingClientRect()
+  return { x: (cx - r.left) * (W / r.width), y: (cy - r.top) * (H / r.height) }
+}
+
+let dragB = false, dOffX = 0, dOffY = 0
+let dragH = null
+
+svg.addEventListener('pointerdown', (e) => {
+  const cl = e.target.getAttribute('class')
+  const vb = getVb(e.clientX, e.clientY)
+
+  if (e.target.classList.contains('node-b')) {
+    dragB = true; dOffX = vb.x - B.x; dOffY = vb.y - B.y
+    e.target.style.cursor = 'grabbing'
+    hOff = { h2: 0, h3: 0 }
+    e.preventDefault(); return
+  }
+  if (cl === 'hh2' || cl === 'hh3') { dragH = cl; e.preventDefault() }
+})
+
+document.addEventListener('pointermove', (e) => {
+  const vb = getVb(e.clientX, e.clientY)
+  if (dragB) {
+    B.x = Math.max(20, Math.min(W - nodeW - 20, vb.x - dOffX))
+    B.y = Math.max(20, Math.min(H - nodeH - 20, vb.y - dOffY))
+    render(); e.preventDefault(); return
+  }
+  if (dragH) {
+    if (dragH === 'hh2') hOff.h2 += ((e.movementY || 0) * 0.5)
+    if (dragH === 'hh3') hOff.h3 += ((e.movementX || 0) * 0.5)
+    render(); e.preventDefault()
+  }
+})
+
+document.addEventListener('pointerup', () => {
+  if (dragB) { dragB = false; const el = document.querySelector('.node-b'); if (el) el.style.cursor = 'grab' }
+  dragH = null
+})
+
+render()
+})();
+</script>
+</body>
+</html>

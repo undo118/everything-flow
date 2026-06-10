@@ -638,7 +638,7 @@ function ConnectorOverlay({ editor }) {
                 let closest = null, minDist = Infinity
                 for (const tVal of targets) {
                   const dist = Math.abs(tVal - handleVal)
-                  if (dist < minDist && dist < 8) {
+                  if (dist < minDist && dist < 6) {
                     minDist = dist; closest = tVal
                   }
                 }

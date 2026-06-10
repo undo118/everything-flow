@@ -35,6 +35,15 @@ function getDirType(sDot, tDot) {
   if (sDot === 'bottom' && tDot === 'bottom') return 'bottom-bottom'
   if (sDot === 'left'   && tDot === 'left')   return 'left-left'
   if (sDot === 'right'  && tDot === 'right')  return 'right-right'
+  // Cross-direction
+  if (sDot === 'top'    && tDot === 'left')   return 'top-left'
+  if (sDot === 'top'    && tDot === 'right')  return 'top-right'
+  if (sDot === 'bottom' && tDot === 'left')   return 'bottom-left'
+  if (sDot === 'bottom' && tDot === 'right')  return 'bottom-right'
+  if (sDot === 'left'   && tDot === 'top')    return 'left-top'
+  if (sDot === 'left'   && tDot === 'bottom') return 'left-bottom'
+  if (sDot === 'right'  && tDot === 'top')    return 'right-top'
+  if (sDot === 'right'  && tDot === 'bottom') return 'right-bottom'
   return null
 }
 
@@ -70,7 +79,7 @@ const DIR = {
     behindSide: 'above',
     extPerp(a, b) { return { x: a.x, y: a.y - EXT } },
     lowExt(a)  { return a.y - EXT },
-    highExt(b, a) { return Math.max(b.y + b.h + EXT, a.y + a.h + EXT) },
+    highExt(b, a) { return Math.max(b.y + EXT, a.y + a.h + EXT) },
     pathSegments(aX, aY, bX, bY, cl, ch, vertPos) {
       return [
         { x: aX, y: aY }, { x: aX, y: cl },
@@ -114,7 +123,7 @@ const DIR = {
     behindSide: 'left',
     extPerp(a, b) { return { x: a.x - EXT, y: a.y } },
     lowExt(a)  { return a.x - EXT },
-    highExt(b, a) { return Math.max(b.x + b.w + EXT, a.x + a.w + EXT) },
+    highExt(b, a) { return Math.max(b.x + EXT, a.x + a.w + EXT) },
     pathSegments(aX, aY, bX, bY, cl, ch, vertPos) {
       return [
         { x: aX, y: aY }, { x: cl, y: aY },
@@ -301,6 +310,128 @@ function routeSameSide(dirType, aDot, bDot, sBounds, tBounds, h2, h3, h4) {
 }
 
 /**
+ * Cross-direction routing (perpendicular axes).
+ * e.g. A.top → B.left, A.left → B.top, etc.
+ * Always 4 segments (5 points) or 2 segments (degenerate).
+ */
+function routeCrossDir(sBounds, tBounds, sDot, tDot, h2, h3, h4) {
+  const EXT = 30, MIN_2SEG = 10
+
+  const aDot = edgeCenter(sBounds, sDot)
+  const bDot = edgeCenter(tBounds, tDot)
+  const aX = aDot.x, aY = aDot.y, bX = bDot.x, bY = bDot.y
+
+  const aL = sBounds.x, aR = sBounds.x + sBounds.w, aT = sBounds.y, aBtm = sBounds.y + sBounds.h
+  const bL = tBounds.x, bR = tBounds.x + tBounds.w, bT = tBounds.y, bBtm = tBounds.y + tBounds.h
+
+  const isSrcVert = sDot === 'top' || sDot === 'bottom'
+  const emitUp = sDot === 'top', emitDown = sDot === 'bottom'
+  const emitLeft = sDot === 'left', emitRight = sDot === 'right'
+  const tgtLeft = tDot === 'left', tgtRight = tDot === 'right'
+  const tgtTop = tDot === 'top', tgtBottom = tDot === 'bottom'
+
+  // ---- 2-segment degenerate ----
+  let isDeg2 = false, deg2Pts = null
+  if (emitUp && tgtLeft  && aX < bX) { const s1 = Math.abs(aY-bY), s2 = Math.abs(aX-bX); if (bY < aY && s1 > MIN_2SEG && s2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{x:aX,y:aY},{x:aX,y:bY},{x:bX,y:bY}] } }
+  else if (emitUp && tgtRight && aX > bX) { const s1 = Math.abs(aY-bY), s2 = Math.abs(aX-bX); if (bY < aY && s1 > MIN_2SEG && s2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{x:aX,y:aY},{x:aX,y:bY},{x:bX,y:bY}] } }
+  else if (emitDown && tgtLeft  && aX < bX) { const s1 = Math.abs(aY-bY), s2 = Math.abs(aX-bX); if (bY > aY && s1 > MIN_2SEG && s2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{x:aX,y:aY},{x:aX,y:bY},{x:bX,y:bY}] } }
+  else if (emitDown && tgtRight && aX > bX) { const s1 = Math.abs(aY-bY), s2 = Math.abs(aX-bX); if (bY > aY && s1 > MIN_2SEG && s2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{x:aX,y:aY},{x:aX,y:bY},{x:bX,y:bY}] } }
+  else if (emitLeft && tgtTop    && aY < bY) { const s1 = Math.abs(aX-bX), s2 = Math.abs(aY-bY); if (bX < aX && s1 > MIN_2SEG && s2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{x:aX,y:aY},{x:bX,y:aY},{x:bX,y:bY}] } }
+  else if (emitLeft && tgtBottom && aY > bY) { const s1 = Math.abs(aX-bX), s2 = Math.abs(aY-bY); if (bX < aX && s1 > MIN_2SEG && s2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{x:aX,y:aY},{x:bX,y:aY},{x:bX,y:bY}] } }
+  else if (emitRight && tgtTop    && aY < bY) { const s1 = Math.abs(aX-bX), s2 = Math.abs(aY-bY); if (bX > aX && s1 > MIN_2SEG && s2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{x:aX,y:aY},{x:bX,y:aY},{x:bX,y:bY}] } }
+  else if (emitRight && tgtBottom && aY > bY) { const s1 = Math.abs(aX-bX), s2 = Math.abs(aY-bY); if (bX > aX && s1 > MIN_2SEG && s2 > MIN_2SEG) { isDeg2 = true; deg2Pts = [{x:aX,y:aY},{x:bX,y:aY},{x:bX,y:bY}] } }
+
+  if (isDeg2) {
+    const d = deg2Pts.map((p,i)=>(i===0?'M':'L')+` ${p.x} ${p.y}`).join(' ')
+    return { d, segs: 2, mode: '2段 直连', pts: deg2Pts, handles: [] }
+  }
+
+  // ---- 4-segment routing ----
+  let pt2_x, pt2_y, pt3_x, pt3_y
+
+  if (isSrcVert) {
+    if (emitUp) {
+      if (bBtm <= aT) pt2_y = (aT + bBtm) / 2 + h2
+      else pt2_y = Math.min(aT, bT) - EXT + h2
+      if (pt2_y > aT - 4) pt2_y = aT - 4
+    } else {
+      if (bT >= aBtm) pt2_y = (aBtm + bT) / 2 + h2
+      else pt2_y = Math.max(aBtm, bBtm) + EXT + h2
+      if (pt2_y < aBtm + 4) pt2_y = aBtm + 4
+    }
+    if (tgtLeft) {
+      if (bL > aR) pt3_x = (aR + bL) / 2 + h3
+      else pt3_x = Math.min(aL, bL) - EXT + h3
+      if (pt3_x >= bL) pt3_x = bL - EXT
+    } else {
+      if (bR < aL) pt3_x = (aL + bR) / 2 + h3
+      else pt3_x = Math.max(aR, bR) + EXT + h3
+      if (pt3_x <= bR) pt3_x = bR + EXT
+    }
+  } else {
+    if (emitLeft) {
+      if (bR <= aL) pt2_x = (aL + bR) / 2 + h2
+      else pt2_x = Math.min(aL, bL) - EXT + h2
+      if (pt2_x >= aL) pt2_x = aL - EXT
+    } else {
+      if (bL >= aR) pt2_x = (aR + bL) / 2 + h2
+      else pt2_x = Math.max(aR, bR) + EXT + h2
+      if (pt2_x <= aR) pt2_x = aR + EXT
+    }
+    if (tgtTop) {
+      if (bT > aBtm) {
+        pt3_y = (aBtm + bT) / 2 + h3
+        if (pt3_y <= aBtm) pt3_y = aBtm + EXT
+        if (pt3_y >= bT) pt3_y = bT - EXT
+      } else {
+        pt3_y = Math.min(aT, bT) - EXT + h3
+        if (pt3_y >= bT) pt3_y = bT - EXT
+      }
+    } else {
+      if (bBtm < aT) {
+        pt3_y = (aT + bBtm) / 2 + h3
+        if (pt3_y >= aT) pt3_y = aT - EXT
+        if (pt3_y <= bBtm) pt3_y = bBtm + EXT
+      } else {
+        pt3_y = Math.max(aBtm, bBtm) + EXT + h3
+        if (pt3_y <= bBtm) pt3_y = bBtm + EXT
+      }
+    }
+  }
+
+  const pt2 = isSrcVert ? { x: aX, y: pt2_y } : { x: pt2_x, y: aY }
+  const pt3 = isSrcVert ? { x: pt3_x, y: bY } : { x: bX, y: pt3_y }
+
+  const pts = [
+    { x: aX, y: aY },
+    { x: pt2.x, y: pt2.y },
+    isSrcVert ? { x: pt3.x, y: pt2.y } : { x: pt2.x, y: pt3.y },
+    { x: pt3.x, y: pt3.y },
+    { x: bX, y: bY },
+  ]
+
+  const d = pts.map((p, i) => (i === 0 ? 'M' : 'L') + ` ${p.x} ${p.y}`).join(' ')
+
+  const handles = []
+  const seg2len = isSrcVert ? Math.abs(pts[2].x - pts[1].x) : Math.abs(pts[2].y - pts[1].y)
+  if (seg2len > 5) {
+    handles.push({ type: isSrcVert ? 'h' : 'v', x: (pts[1].x + pts[2].x) / 2, y: (pts[1].y + pts[2].y) / 2, offKey: 'h2' })
+  }
+  const seg3len = isSrcVert ? Math.abs(pts[3].y - pts[2].y) : Math.abs(pts[3].x - pts[2].x)
+  if (seg3len > 5) {
+    handles.push({ type: isSrcVert ? 'v' : 'h', x: (pts[2].x + pts[3].x) / 2, y: (pts[2].y + pts[3].y) / 2, offKey: 'h3' })
+  }
+
+  let segCount = 0
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dx = Math.abs(pts[i + 1].x - pts[i].x), dy = Math.abs(pts[i + 1].y - pts[i].y)
+    if (dx > 2 || dy > 2) segCount++
+  }
+
+  return { d, handles, segs: segCount, mode: segCount === 2 ? '2段 对角' : '4段 对角', pts }
+}
+
+/**
  * Compute an orthogonal path between two dots on two rectangular nodes.
  *
  * @param {Object} sBounds - Source node page bounds {x,y,w,h}
@@ -327,15 +458,10 @@ export function orthogonalRoute(sBounds, tBounds, sDot, tDot, off = {}) {
     return routeSameSide(dirType, aDot, bDot, sBounds, tBounds, h2, h3, h4)
   }
 
-  // Fallback: cross-direction → straight line
-  if (!dirType) {
-    return {
-      d: `M ${aX} ${aY} L ${bX} ${bY}`,
-      handles: [],
-      segs: 1,
-      mode: '直线',
-      pts: [{ x: aX, y: aY }, { x: bX, y: bY }],
-    }
+  // Cross-direction routing
+  const crossDirs = ['top-left','top-right','bottom-left','bottom-right','left-top','left-bottom','right-top','right-bottom']
+  if (crossDirs.includes(dirType)) {
+    return routeCrossDir(sBounds, tBounds, sDot, tDot, h2, h3, h4)
   }
 
   const dir = DIR[dirType]

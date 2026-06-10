@@ -459,6 +459,7 @@ function ConnectorOverlay({ editor }) {
       window.__resetArrowOffsets = (key) => { delete handleOffsetsRef.current[key] }
       window.__getAllConnections = () => JSON.parse(JSON.stringify(connectionsRef.current))
       window.__restoreConnections = (data) => { connectionsRef.current = data; if (updateRef.current) updateRef.current() }
+      window.__connectionsRef = connectionsRef
     }
     return editor.store.listen(update)
   }, [editor, hoveredShapeId, preview])

@@ -121,7 +121,7 @@ export default function CustomPageSelector({ ready }) {
   const handleDuplicatePage = useCallback(async (pageId) => {
     const editor = getEditor()
     if (!editor) return
-    // Build position-based ID map for source page flow-nodes
+    // Save source page: flow-node positions + connections
     const allRecords = editor.store.allRecords()
     const oldFlowNodes = allRecords.filter(
       r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort && r.parentId === pageId
@@ -130,7 +130,7 @@ export default function CustomPageSelector({ ready }) {
     for (const s of oldFlowNodes) {
       posToOldId[`${Math.round(s.x)},${Math.round(s.y)}`] = s.id
     }
-    const sourceConns = window.__getAllConnections?.()?.[pageId]
+    const sourceConns = window.__connectionsRef?.current?.[pageId]
     const oldPageIds = new Set(editor.getPages().map(p => p.id))
 
     editor.duplicatePage(pageId)
@@ -139,28 +139,34 @@ export default function CustomPageSelector({ ready }) {
     // Wait for store to settle
     await new Promise(r => setTimeout(r, 50))
 
+    // Find new page
     const newPage = editor.getPages().find(p => !oldPageIds.has(p.id))
-    if (newPage && sourceConns && sourceConns.length > 0 && window.__restoreConnections) {
-      const newRecords = editor.store.allRecords()
-      const newFlowNodes = newRecords.filter(
-        r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort && r.parentId === newPage.id
-      )
-      const idMap = {}
-      for (const s of newFlowNodes) {
-        const key = `${Math.round(s.x)},${Math.round(s.y)}`
-        if (posToOldId[key]) idMap[posToOldId[key]] = s.id
-      }
-      const newConns = sourceConns.map(c => ({
-        sourceNodeId: idMap[c.sourceNodeId] || c.sourceNodeId,
-        sourceDotId: c.sourceDotId,
-        targetNodeId: idMap[c.targetNodeId] || c.targetNodeId,
-        targetDotId: c.targetDotId,
-        mode: c.mode || 'orthogonal',
-      }))
-      const allConns = window.__getAllConnections?.() || {}
-      allConns[newPage.id] = newConns
-      window.__restoreConnections(allConns)
+    if (!newPage || !sourceConns || sourceConns.length === 0) return
+
+    // Find new flow-nodes on the new page and build idMap by position
+    const newRecords = editor.store.allRecords()
+    const newFlowNodes = newRecords.filter(
+      r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort && r.parentId === newPage.id
+    )
+    const idMap = {}
+    for (const s of newFlowNodes) {
+      const key = `${Math.round(s.x)},${Math.round(s.y)}`
+      if (posToOldId[key]) idMap[posToOldId[key]] = s.id
     }
+
+    // Directly mutate connectionsRef + trigger update
+    if (!window.__connectionsRef?.current[newPage.id]) {
+      window.__connectionsRef.current[newPage.id] = []
+    }
+    const newConns = sourceConns.map(c => ({
+      sourceNodeId: idMap[c.sourceNodeId] || c.sourceNodeId,
+      sourceDotId: c.sourceDotId,
+      targetNodeId: idMap[c.targetNodeId] || c.targetNodeId,
+      targetDotId: c.targetDotId,
+      mode: c.mode || 'orthogonal',
+    }))
+    window.__connectionsRef.current[newPage.id] = newConns
+    window.__triggerArrowUpdate?.()
   }, [refresh])
 
   const handleRenameSubmit = useCallback((pageId) => {

@@ -111,7 +111,7 @@ const DIR = {
     },
     simpleMid(aX, aY, bX, bY, off) {
       const midX = (aX + bX) / 2 + off
-      const clamp = Math.min(aX - 4, Math.max(bX + 4, midX))
+      const clamp = Math.max(aX + 4, Math.min(bX - 4, midX))
       return { d: `M ${aX} ${aY} L ${clamp} ${aY} L ${clamp} ${bY} L ${bX} ${bY}`, midX: clamp, midY: (aY + bY) / 2 }
     },
   },

@@ -121,8 +121,21 @@ export default function CustomPageSelector({ ready }) {
   const handleDuplicatePage = useCallback((pageId) => {
     const editor = getEditor()
     if (!editor) return
+    // Save source page connections before duplicate
+    const sourceConns = window.__getAllConnections?.()?.[pageId]
+    // Track current page IDs to detect the new one
+    const oldPageIds = new Set(editor.getPages().map(p => p.id))
     editor.duplicatePage(pageId)
     refresh()
+    // Find the new page ID (wasn't in oldPageIds)
+    const newPages = editor.getPages()
+    const newPage = newPages.find(p => !oldPageIds.has(p.id))
+    if (newPage && sourceConns && window.__restoreConnections) {
+      // Copy connections from source page to new page
+      const allConns = window.__getAllConnections?.() || {}
+      allConns[newPage.id] = JSON.parse(JSON.stringify(sourceConns))
+      window.__restoreConnections(allConns)
+    }
   }, [refresh])
 
   const handleRenameSubmit = useCallback((pageId) => {

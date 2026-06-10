@@ -8,13 +8,13 @@
 
 ## 🐛 Bug
 
-- [ ] **复制页面时不会同步复制箭头** 🔴 ★★★☆☆
+- [x] ~~**复制页面时不会同步复制箭头** 🔴 ★★★☆☆
   tldraw 原生复制页面不会触发 `connectionsRef` 的复制，新页面节点都在但箭头丢失。
-  - 需要监听 `setCurrentPage` + 页面创建事件，在复制页面时同步深拷贝当前页的 connections
+  - 修复：在 `handleDuplicatePage` 中先保存源页 connections，复制后检测新 pageId，深拷贝 connections 到新页面~~
 
-- [ ] **加载 eflow 文件会覆盖当前页面** 🟠 ★★★☆☆
+- [x] ~~**加载 eflow 文件会覆盖当前页面** 🟠 ★★★☆☆
   当前 `loadSnapshot()` 会替换整个 store，导致当前页内容丢失。
-  - 应改为：加载 eflow 时以新页面方式导入（保留当前页面）或在加载前确认
+  - 修复：改为按页导入。遍历文件中的每个页面，在当前文档创建新页面，重建 shape（含端口），用 idMap 重映射 connections，保留原有页面~~
 
 - [x] ~~**快捷键面板被节点连接点遮挡** 🔴 ★☆☆☆☆
   键盘快捷键对话框（tldraw 原生）z-index 低于 ConnectorOverlay(10000)，已修复：CSS 覆盖 `.tlui-dialog__overlay` → z-index: 10010~~

@@ -1253,20 +1253,86 @@ export default function App() {
         if (!data || typeof data !== 'object') throw new Error('格式无效')
 
         if (data.app === 'everything-flow' && data.snapshot && data.connections) {
-          // .eflow format — full load, rename first page
+          // .eflow format — import as new pages, don't overwrite current content
           const editor = editorRef.current
-          const fileName = file.name.replace(/\.(eflow|json)$/i, '')
-          loadSnapshot(editor.store, data.snapshot)
+          const fileName = file.name.replace(/\\.(eflow|json)$/i, '')
+          const { snapshot, connections: fileConns } = data
 
-          // Rename the first page to the filename
-          const pages = editor.getPages()
-          if (pages.length > 0) {
-            editor.updatePage({ id: pages[0].id, name: fileName })
+          // Collect page records from snapshot
+          const allRecords = Object.values(snapshot.store)
+          const pageRecords = allRecords.filter(r => r.typeName === 'page')
+
+          if (pageRecords.length === 0) throw new Error('文件中没有页面')
+
+          // Import each page from the file
+          const allFilesConns = typeof fileConns === 'object' ? fileConns : {}
+          const currentConns = window.__getAllConnections?.() || {}
+
+          for (const pageRec of pageRecords) {
+            // Create a new page in current document
+            const pageName = pageRec.name || '未命名'
+            editor.createPage({ name: `${pageName} (${fileName})` })
+
+            // Find the newly created page (last in the list)
+            const pages = editor.getPages()
+            const newPage = pages[pages.length - 1]
+            if (!newPage) continue
+
+            // Get all shapes on this file page (top-level only)
+            const fileShapes = allRecords.filter(
+              r => r.typeName === 'shape' && r.parentId === pageRec.id
+            )
+
+            // Build ID map: oldFileId → newId
+            const idMap = {}
+
+            // Create top-level shapes & their children (ports)
+            for (const s of fileShapes) {
+              const newShapeId = `shape:fnode-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+              idMap[s.id] = newShapeId
+              editor.createShape({
+                id: newShapeId,
+                type: s.type,
+                x: s.x,
+                y: s.y,
+                props: { ...s.props },
+              })
+
+              // Find child shapes (ports) for this node
+              const childShapes = allRecords.filter(
+                r => r.typeName === 'shape' && r.parentId === s.id
+              )
+              for (const child of childShapes) {
+                const newChildId = `shape:fport-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+                idMap[child.id] = newChildId
+                editor.createShape({
+                  id: newChildId,
+                  type: child.type,
+                  parentId: newShapeId,
+                  x: child.x,
+                  y: child.y,
+                  props: { ...child.props },
+                })
+              }
+            }
+
+            // Remap connections for this page
+            const pageConns = allFilesConns[pageRec.id] || []
+            if (pageConns.length > 0) {
+              const remappedConns = pageConns.map(c => ({
+                sourceNodeId: idMap[c.sourceNodeId] || c.sourceNodeId,
+                sourceDotId: c.sourceDotId,
+                targetNodeId: idMap[c.targetNodeId] || c.targetNodeId,
+                targetDotId: c.targetDotId,
+                mode: c.mode || 'orthogonal',
+              }))
+              currentConns[newPage.id] = remappedConns
+            }
           }
 
-          // Restore connections
+          // Restore all connections (existing pages + new imports)
           if (window.__restoreConnections) {
-            window.__restoreConnections(data.connections)
+            window.__restoreConnections(currentConns)
           }
         } else {
           // Legacy: try loading as raw store data or snapshot

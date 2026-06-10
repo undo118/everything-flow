@@ -118,15 +118,16 @@ export default function CustomPageSelector({ ready }) {
     setEditName(currentName)
   }, [])
 
-  const handleDuplicatePage = useCallback((pageId) => {
+  const handleDuplicatePage = useCallback(async (pageId) => {
     const editor = getEditor()
     if (!editor) return
     // Build position-based ID map for source page flow-nodes
-    const oldShapes = (editor.getSortedChildIdsForParent(pageId) || [])
-      .map(id => editor.getShape(id))
-      .filter(s => s && s.type === 'flow-node' && !s.props?.isPort)
+    const allRecords = editor.store.allRecords()
+    const oldFlowNodes = allRecords.filter(
+      r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort && r.parentId === pageId
+    )
     const posToOldId = {}
-    for (const s of oldShapes) {
+    for (const s of oldFlowNodes) {
       posToOldId[`${Math.round(s.x)},${Math.round(s.y)}`] = s.id
     }
     const sourceConns = window.__getAllConnections?.()?.[pageId]
@@ -135,18 +136,20 @@ export default function CustomPageSelector({ ready }) {
     editor.duplicatePage(pageId)
     refresh()
 
-    // Find new page + build idMap by matching positions
+    // Wait for store to settle
+    await new Promise(r => setTimeout(r, 50))
+
     const newPage = editor.getPages().find(p => !oldPageIds.has(p.id))
     if (newPage && sourceConns && sourceConns.length > 0 && window.__restoreConnections) {
-      const newShapes = (editor.getSortedChildIdsForParent(newPage.id) || [])
-        .map(id => editor.getShape(id))
-        .filter(s => s && s.type === 'flow-node' && !s.props?.isPort)
+      const newRecords = editor.store.allRecords()
+      const newFlowNodes = newRecords.filter(
+        r => r.typeName === 'shape' && r.type === 'flow-node' && !r.props?.isPort && r.parentId === newPage.id
+      )
       const idMap = {}
-      for (const s of newShapes) {
+      for (const s of newFlowNodes) {
         const key = `${Math.round(s.x)},${Math.round(s.y)}`
         if (posToOldId[key]) idMap[posToOldId[key]] = s.id
       }
-      // Remap connections
       const newConns = sourceConns.map(c => ({
         sourceNodeId: idMap[c.sourceNodeId] || c.sourceNodeId,
         sourceDotId: c.sourceDotId,

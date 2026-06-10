@@ -168,4 +168,42 @@ export class FlowNodeShapeUtil extends ShapeUtil {
     if (shape.props.isPort) return null
     return <rect x={0} y={0} width={shape.props.w} height={shape.props.h} rx={8} fill="none" stroke="#6c63ff" strokeWidth={2} />
   }
+
+  toSvg(shape, ctx) {
+    // Ports: skip
+    if (shape.props.isPort) return null
+
+    const { w, h, markdown, fields: fieldsJson } = shape.props
+
+    // Parse markdown → HTML
+    let html = ''
+    try { html = marked.parse(markdown) } catch { html = `<pre>${markdown}</pre>` }
+
+    let fields = []
+    try { fields = JSON.parse(fieldsJson || '[]') } catch { fields = [] }
+    const visibleFields = fields.filter(f => f.value)
+
+    return React.createElement('g', null,
+      React.createElement('rect', { x: 0, y: 0, width: w, height: h, rx: 8, fill: '#1e1e3a', stroke: '#444', strokeWidth: 1 }),
+      React.createElement('foreignObject', { x: 0, y: 0, width: w, height: h },
+        React.createElement('div', {
+          style: { fontFamily: 'system-ui,-apple-system,sans-serif', fontSize: 13, lineHeight: 1.7, color: '#e0e0e0', padding: '16px 18px', boxSizing: 'border-box', width: w, height: h, overflow: 'hidden' }
+        },
+          React.createElement('div', {
+            style: { marginBottom: visibleFields.length > 0 ? 12 : 0 },
+            dangerouslySetInnerHTML: { __html: html }
+          }),
+          visibleFields.length > 0 && React.createElement('div', { style: { borderTop: '1px solid #333', paddingTop: 10, marginTop: 4 } },
+            ...visibleFields.map((f, i) =>
+              React.createElement('div', { key: i, style: { fontSize: 12, color: '#aaa', lineHeight: 1.8 } },
+                React.createElement('span', { style: { color: '#888', marginRight: 4 } }, f.key),
+                React.createElement('span', { style: { color: '#ccc' } }, f.value),
+              )
+            )
+          ),
+        )
+      ),
+      shape.props.locked && React.createElement('text', { x: w - 22, y: 20, fontSize: 13, fill: '#888' }, '🔒'),
+    )
+  }
 }

@@ -10,6 +10,7 @@ import UndoRedo from './components/UndoRedo'
 import SaveExportMenu from './components/SaveExportMenu'
 import ActionsBridge from './components/ActionsBridge'
 import DialogBridge from './components/DialogBridge'
+import { marked } from 'marked'
 import { orthogonalRoute } from './utils/orthogonalRouting'
 
 let globalEditor = null
@@ -1284,88 +1285,269 @@ export default function App() {
     if (!editorRef.current) return
     try {
       const editor = editorRef.current
-      const shapeIds = Array.from(editor.getCurrentPageShapeIds())
-      const svg = await editor.getSvg(shapeIds)
-      if (!svg) throw new Error('SVG 生成失败')
+      const pageId = editor.getCurrentPageId()
+      const shapes = editor.store.allRecords().filter(r =>
+        r.typeName === 'shape' && !r.props?.isPort && r.parentId === pageId
+      )
 
-      // Add overlay arrows as SVG paths
+      const NS = 'http://www.w3.org/2000/svg'
+      const svg = document.createElementNS(NS, 'svg')
+      svg.setAttribute('xmlns', NS)
+      svg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+
+      // Collect all bounds
+      const boundsList = []
+      for (const shape of shapes) {
+        const b = editor.getShapePageBounds(shape.id)
+        if (b) boundsList.push({ b, shape })
+      }
+      if (boundsList.length === 0) throw new Error('没有可导出的节点')
+
+      // Compute viewBox from node bounds + arrow bounds
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      for (const { b } of boundsList) {
+        if (b.x < minX) minX = b.x; if (b.y < minY) minY = b.y
+        if (b.x + b.w > maxX) maxX = b.x + b.w; if (b.y + b.h > maxY) maxY = b.y + b.h
+      }
+
+      // Compute arrows (once, reuse for bounds + rendering)
       const conns = window.__getPageConnections?.() || []
-
+      const arrowRoutes = []
       for (const conn of conns) {
         const sBounds = editor.getShapePageBounds(conn.sourceNodeId)
         const tBounds = editor.getShapePageBounds(conn.targetNodeId)
         if (!sBounds || !tBounds) continue
 
-        const off = { h2: 0, h3: 0, h4: 0 }
-        const route = orthogonalRoute(sBounds, tBounds, conn.sourceDotId, conn.targetDotId, off)
-        if (!route || !route.d) continue
+        let route
+        if (conn.mode === 'straight') {
+          const sPt = getEdgePoint(sBounds, conn.sourceDotId)
+          const tPt = getEdgePoint(tBounds, conn.targetDotId)
+          const dx = tPt.x - sPt.x, dy = tPt.y - sPt.y
+          route = {
+            d: `M ${sPt.x} ${sPt.y} L ${tPt.x} ${tPt.y}`,
+            pts: [sPt, tPt],
+          }
+        } else {
+          route = orthogonalRoute(sBounds, tBounds, conn.sourceDotId, conn.targetDotId, {})
+        }
+        if (!route || !route.d || !route.pts) continue
+        arrowRoutes.push(route)
+        for (const p of route.pts) {
+          if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y
+          if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y
+        }
+      }
 
-        // Create arrow path in SVG
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      const pad = 30
+      minX -= pad; minY -= pad; maxX += pad; maxY += pad
+      const vw = maxX - minX, vh = maxY - minY
+
+      // Set SVG physical size + viewBox
+      svg.setAttribute('width', String(vw))
+      svg.setAttribute('height', String(vh))
+      svg.setAttribute('viewBox', `${minX} ${minY} ${vw} ${vh}`)
+
+      // Dark background rect covering full viewBox
+      const bgRect = document.createElementNS(NS, 'rect')
+      bgRect.setAttribute('x', String(minX))
+      bgRect.setAttribute('y', String(minY))
+      bgRect.setAttribute('width', String(vw))
+      bgRect.setAttribute('height', String(vh))
+      bgRect.setAttribute('fill', '#101011')  // tldraw dark theme bg: hsl(240,5%,6.5%)
+      svg.appendChild(bgRect)
+
+      // Arrow marker def — matches ConnectorOverlay on-screen marker
+      const defs = document.createElementNS(NS, 'defs')
+      const marker = document.createElementNS(NS, 'marker')
+      marker.setAttribute('id', 'ah-export')
+      marker.setAttribute('markerWidth', '4')
+      marker.setAttribute('markerHeight', '5')
+      marker.setAttribute('refX', '4')
+      marker.setAttribute('refY', '2.5')
+      marker.setAttribute('orient', 'auto')
+      const mpoly = document.createElementNS(NS, 'polygon')
+      mpoly.setAttribute('points', '4 2.5, 0 0, 0 5')
+      mpoly.setAttribute('fill', '#6c63ff')
+      marker.appendChild(mpoly)
+      defs.appendChild(marker)
+      svg.appendChild(defs)
+
+      // Render each node as SVG group
+      for (const { b, shape } of boundsList) {
+        const { w, h, markdown, fields: fieldsJson } = shape.props
+        const g = document.createElementNS(NS, 'g')
+        g.setAttribute('transform', `translate(${b.x}, ${b.y})`)
+
+        // Background rect
+        const rect = document.createElementNS(NS, 'rect')
+        rect.setAttribute('width', String(w))
+        rect.setAttribute('height', String(h))
+        rect.setAttribute('rx', '8')
+        rect.setAttribute('fill', '#1e1e3a')
+        rect.setAttribute('stroke', '#444')
+        rect.setAttribute('stroke-width', '1')
+        g.appendChild(rect)
+
+        // Lock icon
+        if (shape.props.locked) {
+          const lockEl = document.createElementNS(NS, 'text')
+          lockEl.setAttribute('x', String(w - 22))
+          lockEl.setAttribute('y', '20')
+          lockEl.setAttribute('font-size', '13')
+          lockEl.setAttribute('fill', '#888')
+          lockEl.textContent = '🔒'
+          g.appendChild(lockEl)
+        }
+
+        // Content: render markdown as pure SVG text elements
+        // (foreignObject taints canvas — cannot use for SVG→Image→Canvas export)
+        let fields = []
+        try { fields = JSON.parse(fieldsJson || '[]') } catch {}
+        const visFields = fields.filter(f => f.value)
+
+        // Measure text width (SVG, CJK-aware)
+        function textWidth(s, fs) {
+          let w = 0
+          for (const ch of s) {
+            w += /[\u4e00-\u9fff\u3000-\u30ff]/.test(ch) ? fs : fs * 0.6
+          }
+          return w
+        }
+
+        // Parse markdown tokens
+        let mdTokens = []
+        try { mdTokens = marked.lexer(markdown).filter(t => t.type === 'heading' || t.type === 'paragraph') } catch {}
+
+        // Render markdown and fields as SVG text
+        let yPos = 28  // start below padding (16px) + small margin
+        const maxTextW = w - 36  // available width with 18px padding on each side
+
+        for (const tok of mdTokens) {
+          if (tok.type === 'heading') {
+            const fs = 18
+            const text = tok.text.replace(/<[^>]+>/g, '').trim()
+            const el = document.createElementNS(NS, 'text')
+            el.setAttribute('x', '18')
+            el.setAttribute('y', String(yPos))
+            el.setAttribute('fill', '#e0e0e0')
+            el.setAttribute('font-size', String(fs))
+            el.setAttribute('font-weight', 'bold')
+            el.setAttribute('font-family', 'system-ui,-apple-system,sans-serif')
+            el.textContent = textWidth(text, fs) > maxTextW ? text.slice(0, Math.floor(maxTextW / fs) - 1) + '…' : text
+            g.appendChild(el)
+            yPos += fs + 8  // heading height + gap
+          } else if (tok.type === 'paragraph') {
+            const fs = 13
+            const text = tok.text.replace(/<[^>]+>/g, '').trim()
+            if (!text) continue
+            const el = document.createElementNS(NS, 'text')
+            el.setAttribute('x', '18')
+            el.setAttribute('y', String(yPos))
+            el.setAttribute('fill', '#ccc')
+            el.setAttribute('font-size', String(fs))
+            el.setAttribute('font-family', 'system-ui,-apple-system,sans-serif')
+            el.textContent = textWidth(text, fs) > maxTextW ? text.slice(0, Math.floor(maxTextW / (fs * 0.6)) - 1) + '…' : text
+            g.appendChild(el)
+            yPos += Math.round(fs * 1.7)  // line height ~1.7
+          }
+        }
+
+        // Fields
+        if (visFields.length > 0) {
+          // Separator line
+          yPos += 4
+          const sep = document.createElementNS(NS, 'line')
+          sep.setAttribute('x1', '18')
+          sep.setAttribute('y1', String(yPos))
+          sep.setAttribute('x2', String(w - 18))
+          sep.setAttribute('y2', String(yPos))
+          sep.setAttribute('stroke', '#333')
+          sep.setAttribute('stroke-width', '1')
+          g.appendChild(sep)
+
+          yPos += 14  // paddingTop 10 + 4 gap
+          const fieldFs = 12
+          const maxKeyPx = (w - 36) * 0.38
+          for (const f of visFields) {
+            // Key text (truncate by pixel)
+            let keyText = f.key
+            let keyPx = 0
+            for (let ci = 0; ci < keyText.length; ci++) {
+              const cw = /[\u4e00-\u9fff\u3000-\u30ff]/.test(keyText[ci]) ? fieldFs : fieldFs * 0.6
+              if (keyPx + cw > maxKeyPx) { keyText = keyText.slice(0, ci) + '…'; break }
+              keyPx += cw
+            }
+
+            const keyEl = document.createElementNS(NS, 'text')
+            keyEl.setAttribute('x', '18')
+            keyEl.setAttribute('y', String(yPos))
+            keyEl.setAttribute('fill', '#888')
+            keyEl.setAttribute('font-size', String(fieldFs))
+            keyEl.setAttribute('font-family', 'system-ui,-apple-system,sans-serif')
+            keyEl.textContent = keyText
+            g.appendChild(keyEl)
+
+            // Value text
+            let valText = f.value
+            const maxValPx = (w - 36) - keyPx - 6
+            let valPx = 0
+            for (let ci = 0; ci < valText.length; ci++) {
+              const cw = /[\u4e00-\u9fff\u3000-\u30ff]/.test(valText[ci]) ? fieldFs : fieldFs * 0.6
+              if (valPx + cw > maxValPx) { valText = valText.slice(0, ci) + '…'; break }
+              valPx += cw
+            }
+
+            const valEl = document.createElementNS(NS, 'text')
+            valEl.setAttribute('x', String(18 + keyPx + 6))
+            valEl.setAttribute('y', String(yPos))
+            valEl.setAttribute('fill', '#ccc')
+            valEl.setAttribute('font-size', String(fieldFs))
+            valEl.setAttribute('font-family', 'system-ui,-apple-system,sans-serif')
+            valEl.textContent = valText
+            g.appendChild(valEl)
+
+            yPos += 22
+          }
+        }
+
+        svg.appendChild(g)
+      }
+
+      // Add arrows
+      for (const route of arrowRoutes) {
+        const path = document.createElementNS(NS, 'path')
         path.setAttribute('d', route.d)
         path.setAttribute('stroke', '#6c63ff')
         path.setAttribute('stroke-width', '2.5')
         path.setAttribute('fill', 'none')
-        path.setAttribute('marker-end', 'url(#arrowhead-export)')
-
-        // Add arrowhead marker
-        let defs = svg.querySelector('defs')
-        if (!defs) {
-          defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
-          svg.prepend(defs)
-        }
-        if (!svg.querySelector('#arrowhead-export')) {
-          const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker')
-          marker.setAttribute('id', 'arrowhead-export')
-          marker.setAttribute('markerWidth', '4')
-          marker.setAttribute('markerHeight', '5')
-          marker.setAttribute('refX', '4')
-          marker.setAttribute('refY', '2.5')
-          marker.setAttribute('orient', 'auto')
-          const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon')
-          poly.setAttribute('points', '4 2.5, 0 0, 0 5')
-          poly.setAttribute('fill', '#6c63ff')
-          marker.appendChild(poly)
-          defs.appendChild(marker)
-        }
-
-        // Find the right insertion point (after existing shapes)
-        const g = svg.querySelector('g') || svg
-        g.appendChild(path)
+        path.setAttribute('marker-end', 'url(#ah-export)')
+        svg.appendChild(path)
       }
 
-      // Convert SVG to PNG
+      // Convert to PNG
       const svgStr = new XMLSerializer().serializeToString(svg)
       const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
       const url = URL.createObjectURL(svgBlob)
 
       const img = new Image()
       img.onload = () => {
-        const padding = 20
+        const scale = 2
         const canvas = document.createElement('canvas')
-        const vb = svg.getAttribute('viewBox')
-        let vw = 1200, vh = 800
-        if (vb) {
-          const parts = vb.split(/\s+/).map(Number)
-          vw = parts[2] || 1200
-          vh = parts[3] || 800
-        }
-        canvas.width = vw + padding * 2
-        canvas.height = vh + padding * 2
-
+        canvas.width = Math.round(vw * scale)
+        canvas.height = Math.round(vh * scale)
         const ctx = canvas.getContext('2d')
-        // Dark background matching the theme
-        ctx.fillStyle = '#1a1a2e'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        ctx.drawImage(img, padding, padding, vw, vh)
-
+        ctx.scale(scale, scale)
+        // SVG viewBox maps (-30,-30,800,600) → image pixels (0,0,800,600)
+        // Draw full SVG image into canvas, matching canvas dimensions exactly
+        ctx.drawImage(img, 0, 0, vw, vh)
         canvas.toBlob((pngBlob) => {
           if (pngBlob) {
             const pngUrl = URL.createObjectURL(pngBlob)
+            const pages = editor.getPages()
+            const cp = pages.find(p => p.id === pageId)
+            const name = (cp?.name || 'untitled').replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_')
             const a = document.createElement('a')
-            a.href = pngUrl
-            a.download = `everything-flow-${Date.now()}.png`
-            a.click()
+            a.href = pngUrl; a.download = `${name}.png`; a.click()
             URL.revokeObjectURL(pngUrl)
           }
           URL.revokeObjectURL(url)

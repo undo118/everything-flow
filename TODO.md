@@ -8,6 +8,14 @@
 
 ## 🐛 Bug
 
+- [ ] **复制页面时不会同步复制箭头** 🔴 ★★★☆☆
+  tldraw 原生复制页面不会触发 `connectionsRef` 的复制，新页面节点都在但箭头丢失。
+  - 需要监听 `setCurrentPage` + 页面创建事件，在复制页面时同步深拷贝当前页的 connections
+
+- [ ] **加载 eflow 文件会覆盖当前页面** 🟠 ★★★☆☆
+  当前 `loadSnapshot()` 会替换整个 store，导致当前页内容丢失。
+  - 应改为：加载 eflow 时以新页面方式导入（保留当前页面）或在加载前确认
+
 - [x] ~~**快捷键面板被节点连接点遮挡** 🔴 ★☆☆☆☆
   键盘快捷键对话框（tldraw 原生）z-index 低于 ConnectorOverlay(10000)，已修复：CSS 覆盖 `.tlui-dialog__overlay` → z-index: 10010~~
 
@@ -84,7 +92,10 @@
   - [x] **加载自动识别**：.eflow → 恢复 store + 连接；.json → 仅恢复 store
   - [x] **文件命名**：`everything-flow-YYYY-MM-DD.eflow`
   - [x] **统一文件入口**：SaveExportMenu 合并保存/加载/导出
-  - [ ] PNG 导出（tldraw 原生 + 叠加箭头）
+|- [x] ~~**PNG 导出**~~ ✅ 验收通过
+  - [x] ~~节点用 SVG text 元素替代 foreignObject~~
+  - [x] ~~箭头路径 + marker~~
+  - [x] ~~SVG width/height + 背景 rect~~
 
 - [ ] **节点分区分组及可视化** 🟡 ★★★★☆
   - [ ] 分组/泳道容器 Shape

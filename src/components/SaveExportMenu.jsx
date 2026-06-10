@@ -15,12 +15,10 @@ export default function SaveExportMenu({ ready, onSave, onLoad, onExportPng }) {
 
   const ITEMS = [
     { label: '💾 保存 .eflow', action: 'save-eflow' },
-    { label: '💾 另存为 .json', action: 'save-json' },
     { type: 'separator' },
     { label: '📂 加载文件', action: 'load' },
     { type: 'separator' },
     { label: '🖼 导出 PNG', action: 'export-png' },
-    { label: '📐 导出 SVG', action: 'export-svg' },
   ]
 
   const handleClick = useCallback((item) => {
@@ -28,14 +26,8 @@ export default function SaveExportMenu({ ready, onSave, onLoad, onExportPng }) {
     setOpen(false)
     switch (item.action) {
       case 'save-eflow': onSave('eflow'); break
-      case 'save-json': onSave('json'); break
       case 'load': onLoad(); break
       case 'export-png': onExportPng(); break
-      case 'export-svg': {
-        const actions = window.__TLDRAW_ACTIONS
-        if (actions && actions['export-all-as-svg']) actions['export-all-as-svg'].onSelect('menu')
-        break
-      }
     }
   }, [onSave, onLoad, onExportPng])
 

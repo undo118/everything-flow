@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Tldraw, useEditor } from 'tldraw'
 import 'tldraw/tldraw.css'
+import { loadSnapshot } from '@tldraw/editor'
 import { FlowNodeShapeUtil } from './shapes/FlowNodeShapeUtil'
 import NodeEditor from './components/NodeEditor'
 import CustomMainMenu from './components/CustomMainMenu'
@@ -1212,21 +1213,27 @@ export default function App() {
   const handleSave = (format = 'eflow') => {
     if (!editorRef.current) return
     try {
-      const doc = editorRef.current.store.serialize()
+      const snapshot = editorRef.current.getSnapshot()
       const conns = window.__getAllConnections?.() || {}
       const eflow = {
         app: 'everything-flow',
         version: '0.5',
         timestamp: Date.now(),
-        document: doc,
+        snapshot: snapshot,
         connections: conns,
       }
       const json = JSON.stringify(eflow, null, 2)
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const ext = format === 'eflow' ? 'eflow' : 'json'
+      // Use current page name as filename
+      const page = editorRef.current.getCurrentPageId()
+      const pages = editorRef.current.getPages()
+      const currentPage = pages.find(p => p.id === page)
+      const pageName = currentPage?.name || 'untitled'
+      const safeName = pageName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_')
       const a = document.createElement('a')
-      a.href = url; a.download = `everything-flow-${new Date().toISOString().slice(0,10)}.${ext}`; a.click()
+      a.href = url; a.download = `${safeName}.${ext}`; a.click()
       URL.revokeObjectURL(url)
     } catch (err) { alert('保存失败：' + err.message) }
   }
@@ -1244,15 +1251,29 @@ export default function App() {
         const data = JSON.parse(text)
         if (!data || typeof data !== 'object') throw new Error('格式无效')
 
-        if (data.app === 'everything-flow' && data.document && data.connections) {
-          // .eflow format
-          editorRef.current.store.load(data.document)
+        if (data.app === 'everything-flow' && data.snapshot && data.connections) {
+          // .eflow format — full load, rename first page
+          const editor = editorRef.current
+          const fileName = file.name.replace(/\.(eflow|json)$/i, '')
+          loadSnapshot(editor.store, data.snapshot)
+
+          // Rename the first page to the filename
+          const pages = editor.getPages()
+          if (pages.length > 0) {
+            editor.updatePage({ id: pages[0].id, name: fileName })
+          }
+
+          // Restore connections
           if (window.__restoreConnections) {
             window.__restoreConnections(data.connections)
           }
         } else {
-          // Legacy .json (tldraw store only)
-          editorRef.current.store.load(data)
+          // Legacy: try loading as raw store data or snapshot
+          try {
+            editorRef.current.loadSnapshot(data)
+          } catch {
+            editorRef.current.store.load(data)
+          }
         }
       } catch (err) { alert('加载失败：' + err.message) }
     }
@@ -1262,60 +1283,96 @@ export default function App() {
   const handleExportPng = async () => {
     if (!editorRef.current) return
     try {
-      // Use tldraw's native export as base
-      const actions = window.__TLDRAW_ACTIONS
-      if (actions && actions['export-all-as-png']) {
-        actions['export-all-as-png'].onSelect('menu')
-      } else {
-        // Fallback: try capturing the canvas container
-        const container = document.querySelector('.canvas-container')
-        if (!container) throw new Error('找不到画布容器')
-        // Use a canvas screenshot via the editor's native method
-        const editor = editorRef.current
-        const svg = await editor.getSvg(Array.from(editor.getCurrentPageShapeIds()))
-        if (!svg) throw new Error('SVG 生成失败')
-        // Add overlay arrows as SVG paths
-        const overlaySvg = document.querySelector('.canvas-container svg')
-        if (overlaySvg) {
-          const paths = overlaySvg.querySelectorAll('path')
-          paths.forEach(p => {
-            if (p.getAttribute('stroke') && p.getAttribute('d')) {
-              const clone = svg.querySelector('g') || svg
-              const np = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-              np.setAttribute('d', p.getAttribute('d'))
-              np.setAttribute('stroke', p.getAttribute('stroke'))
-              np.setAttribute('stroke-width', p.getAttribute('stroke-width'))
-              np.setAttribute('fill', 'none')
-              clone.appendChild(np)
-            }
-          })
+      const editor = editorRef.current
+      const shapeIds = Array.from(editor.getCurrentPageShapeIds())
+      const svg = await editor.getSvg(shapeIds)
+      if (!svg) throw new Error('SVG 生成失败')
+
+      // Add overlay arrows as SVG paths
+      const conns = window.__getPageConnections?.() || []
+
+      for (const conn of conns) {
+        const sBounds = editor.getShapePageBounds(conn.sourceNodeId)
+        const tBounds = editor.getShapePageBounds(conn.targetNodeId)
+        if (!sBounds || !tBounds) continue
+
+        const off = { h2: 0, h3: 0, h4: 0 }
+        const route = orthogonalRoute(sBounds, tBounds, conn.sourceDotId, conn.targetDotId, off)
+        if (!route || !route.d) continue
+
+        // Create arrow path in SVG
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+        path.setAttribute('d', route.d)
+        path.setAttribute('stroke', '#6c63ff')
+        path.setAttribute('stroke-width', '2.5')
+        path.setAttribute('fill', 'none')
+        path.setAttribute('marker-end', 'url(#arrowhead-export)')
+
+        // Add arrowhead marker
+        let defs = svg.querySelector('defs')
+        if (!defs) {
+          defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+          svg.prepend(defs)
         }
-        const svgStr = new XMLSerializer().serializeToString(svg)
-        const blob = new Blob([svgStr], { type: 'image/svg+xml' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url; a.download = `everything-flow-${Date.now()}.png`
-        // Convert SVG to PNG via canvas
-        const img = new Image()
-        img.onload = () => {
-          const canvas = document.createElement('canvas')
-          const rect = svg.getBoundingClientRect ? svg.getBoundingClientRect() : { width: 1200, height: 800 }
-          canvas.width = rect.width || 1200
-          canvas.height = rect.height || 800
-          const ctx = canvas.getContext('2d')
-          ctx.drawImage(img, 0, 0)
-          canvas.toBlob((pngBlob) => {
-            if (pngBlob) {
-              const pngUrl = URL.createObjectURL(pngBlob)
-              const b = document.createElement('a')
-              b.href = pngUrl; b.download = `everything-flow-${Date.now()}.png`; b.click()
-              URL.revokeObjectURL(pngUrl)
-            }
-          })
-          URL.revokeObjectURL(url)
+        if (!svg.querySelector('#arrowhead-export')) {
+          const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker')
+          marker.setAttribute('id', 'arrowhead-export')
+          marker.setAttribute('markerWidth', '4')
+          marker.setAttribute('markerHeight', '5')
+          marker.setAttribute('refX', '4')
+          marker.setAttribute('refY', '2.5')
+          marker.setAttribute('orient', 'auto')
+          const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon')
+          poly.setAttribute('points', '4 2.5, 0 0, 0 5')
+          poly.setAttribute('fill', '#6c63ff')
+          marker.appendChild(poly)
+          defs.appendChild(marker)
         }
-        img.src = url
+
+        // Find the right insertion point (after existing shapes)
+        const g = svg.querySelector('g') || svg
+        g.appendChild(path)
       }
+
+      // Convert SVG to PNG
+      const svgStr = new XMLSerializer().serializeToString(svg)
+      const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
+      const url = URL.createObjectURL(svgBlob)
+
+      const img = new Image()
+      img.onload = () => {
+        const padding = 20
+        const canvas = document.createElement('canvas')
+        const vb = svg.getAttribute('viewBox')
+        let vw = 1200, vh = 800
+        if (vb) {
+          const parts = vb.split(/\s+/).map(Number)
+          vw = parts[2] || 1200
+          vh = parts[3] || 800
+        }
+        canvas.width = vw + padding * 2
+        canvas.height = vh + padding * 2
+
+        const ctx = canvas.getContext('2d')
+        // Dark background matching the theme
+        ctx.fillStyle = '#1a1a2e'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(img, padding, padding, vw, vh)
+
+        canvas.toBlob((pngBlob) => {
+          if (pngBlob) {
+            const pngUrl = URL.createObjectURL(pngBlob)
+            const a = document.createElement('a')
+            a.href = pngUrl
+            a.download = `everything-flow-${Date.now()}.png`
+            a.click()
+            URL.revokeObjectURL(pngUrl)
+          }
+          URL.revokeObjectURL(url)
+        }, 'image/png')
+      }
+      img.onerror = () => { alert('PNG 转换失败'); URL.revokeObjectURL(url) }
+      img.src = url
     } catch (err) { alert('PNG 导出失败：' + err.message) }
   }
 

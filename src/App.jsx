@@ -455,6 +455,8 @@ function ConnectorOverlay({ editor }) {
     if (typeof window.__triggerArrowUpdate === 'undefined') {
       window.__triggerArrowUpdate = () => updateRef.current?.()
       window.__resetArrowOffsets = (key) => { delete handleOffsetsRef.current[key] }
+      window.__getAllConnections = () => JSON.parse(JSON.stringify(connectionsRef.current))
+      window.__restoreConnections = (data) => { connectionsRef.current = data; if (updateRef.current) updateRef.current() }
     }
     return editor.store.listen(update)
   }, [editor, hoveredShapeId, preview])
@@ -1207,14 +1209,24 @@ export default function App() {
     createFlowNodeWithPorts(ed, center.x - 150, center.y - 100, 300, 240)
   }
 
-  const handleSave = () => {
+  const handleSave = (format = 'eflow') => {
     if (!editorRef.current) return
     try {
-      const json = JSON.stringify(editorRef.current.store.serialize(), null, 2)
+      const doc = editorRef.current.store.serialize()
+      const conns = window.__getAllConnections?.() || {}
+      const eflow = {
+        app: 'everything-flow',
+        version: '0.5',
+        timestamp: Date.now(),
+        document: doc,
+        connections: conns,
+      }
+      const json = JSON.stringify(eflow, null, 2)
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
+      const ext = format === 'eflow' ? 'eflow' : 'json'
       const a = document.createElement('a')
-      a.href = url; a.download = `everything-flow-${Date.now()}.json`; a.click()
+      a.href = url; a.download = `everything-flow-${new Date().toISOString().slice(0,10)}.${ext}`; a.click()
       URL.revokeObjectURL(url)
     } catch (err) { alert('保存失败：' + err.message) }
   }
@@ -1222,7 +1234,7 @@ export default function App() {
   const handleLoad = () => {
     if (!editorRef.current) return
     const input = document.createElement('input')
-    input.type = 'file'; input.accept = '.json'
+    input.type = 'file'; input.accept = '.eflow,.json'
     input.onchange = async (e) => {
       const file = e.target.files[0]
       if (!file) return
@@ -1230,11 +1242,81 @@ export default function App() {
         const text = await file.text()
         if (!text) throw new Error('空文件')
         const data = JSON.parse(text)
-        if (!data || typeof data !== 'object') throw new Error('JSON 格式无效')
-        editorRef.current.store.load(data)
+        if (!data || typeof data !== 'object') throw new Error('格式无效')
+
+        if (data.app === 'everything-flow' && data.document && data.connections) {
+          // .eflow format
+          editorRef.current.store.load(data.document)
+          if (window.__restoreConnections) {
+            window.__restoreConnections(data.connections)
+          }
+        } else {
+          // Legacy .json (tldraw store only)
+          editorRef.current.store.load(data)
+        }
       } catch (err) { alert('加载失败：' + err.message) }
     }
     input.click()
+  }
+
+  const handleExportPng = async () => {
+    if (!editorRef.current) return
+    try {
+      // Use tldraw's native export as base
+      const actions = window.__TLDRAW_ACTIONS
+      if (actions && actions['export-all-as-png']) {
+        actions['export-all-as-png'].onSelect('menu')
+      } else {
+        // Fallback: try capturing the canvas container
+        const container = document.querySelector('.canvas-container')
+        if (!container) throw new Error('找不到画布容器')
+        // Use a canvas screenshot via the editor's native method
+        const editor = editorRef.current
+        const svg = await editor.getSvg(Array.from(editor.getCurrentPageShapeIds()))
+        if (!svg) throw new Error('SVG 生成失败')
+        // Add overlay arrows as SVG paths
+        const overlaySvg = document.querySelector('.canvas-container svg')
+        if (overlaySvg) {
+          const paths = overlaySvg.querySelectorAll('path')
+          paths.forEach(p => {
+            if (p.getAttribute('stroke') && p.getAttribute('d')) {
+              const clone = svg.querySelector('g') || svg
+              const np = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+              np.setAttribute('d', p.getAttribute('d'))
+              np.setAttribute('stroke', p.getAttribute('stroke'))
+              np.setAttribute('stroke-width', p.getAttribute('stroke-width'))
+              np.setAttribute('fill', 'none')
+              clone.appendChild(np)
+            }
+          })
+        }
+        const svgStr = new XMLSerializer().serializeToString(svg)
+        const blob = new Blob([svgStr], { type: 'image/svg+xml' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = `everything-flow-${Date.now()}.png`
+        // Convert SVG to PNG via canvas
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          const rect = svg.getBoundingClientRect ? svg.getBoundingClientRect() : { width: 1200, height: 800 }
+          canvas.width = rect.width || 1200
+          canvas.height = rect.height || 800
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(img, 0, 0)
+          canvas.toBlob((pngBlob) => {
+            if (pngBlob) {
+              const pngUrl = URL.createObjectURL(pngBlob)
+              const b = document.createElement('a')
+              b.href = pngUrl; b.download = `everything-flow-${Date.now()}.png`; b.click()
+              URL.revokeObjectURL(pngUrl)
+            }
+          })
+          URL.revokeObjectURL(url)
+        }
+        img.src = url
+      }
+    } catch (err) { alert('PNG 导出失败：' + err.message) }
   }
 
   return (
@@ -1269,8 +1351,7 @@ export default function App() {
           <span className="toolbar-divider" />
           <AlignmentButtons editorRef={editorRef} ready={ready} />
           <span className="toolbar-divider" />
-          <button onClick={handleLoad} disabled={!ready}>📂 加载</button>
-          <SaveExportMenu ready={ready} />
+          <SaveExportMenu ready={ready} onSave={handleSave} onLoad={handleLoad} onExportPng={handleExportPng} />
         </div>
       </header>
       <div className="canvas-container">

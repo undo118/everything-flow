@@ -775,7 +775,7 @@ function ConnectorOverlay({ editor }) {
   }, [selectedArrowKey, editor])
 
   return (
-    <div ref={overlayRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9999 }}>
+    <div ref={overlayRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 150 }}>
       {/* Saved arrows — custom SVG */}
       <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'visible' }}>
         <defs>
@@ -820,7 +820,7 @@ function ConnectorOverlay({ editor }) {
           style={{
             position: 'absolute', left: dot.sx - 7, top: dot.sy - 7, width: 14, height: 14, borderRadius: '50%',
             background: preview && preview.portShapeId === dot.portShapeId ? '#aaa' : '#6c63ff',
-            border: '2px solid #fff', cursor: 'crosshair', pointerEvents: 'auto', zIndex: 10000,
+            border: '2px solid #fff', cursor: 'crosshair', pointerEvents: 'auto', zIndex: 155,
             boxShadow: '0 1px 4px rgba(0,0,0,0.5)', transition: 'transform 0.1s, background 0.15s',
           }}
           onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.4)' }}
@@ -854,7 +854,7 @@ function ConnectorOverlay({ editor }) {
             }}
             style={{
               position: 'absolute', left: s.x - s.w / 2, top: s.y - s.h / 2,
-              width: s.w, height: s.h, pointerEvents: 'auto', cursor: 'pointer', zIndex: 9996,
+              width: s.w, height: s.h, pointerEvents: 'auto', cursor: 'pointer', zIndex: 151,
               transform: s.angle ? `rotate(${s.angle}deg)` : undefined,
               transformOrigin: 'center center',
             }}
@@ -884,7 +884,7 @@ function ConnectorOverlay({ editor }) {
             background: '#ff8844',
             border: '1.5px solid #fff',
             pointerEvents: 'auto',
-            zIndex: 9999,
+            zIndex: 152,
             opacity: 0.85,
             boxShadow: '0 1px 4px rgba(0,0,0,0.4)',
             transition: 'transform 0.12s, opacity 0.12s',
@@ -954,7 +954,7 @@ function ScrollbarOverlay({ info, editor }) {
       position: 'absolute',
       left: info.sx, top: info.sy,
       width: info.sw, height: info.sh,
-      pointerEvents: 'auto', zIndex: 10001,
+      pointerEvents: 'auto', zIndex: 156,
       borderRadius: 5, background: 'rgba(255,255,255,0.12)',
       cursor: 'pointer',
     }} onPointerDown={handleTrackDown}>
@@ -1275,7 +1275,7 @@ export default function App() {
       </header>
       <div className="canvas-container">
         <Tldraw onMount={handleMount} shapeUtils={customShapeUtils} theme="dark"
-          components={{ Toolbar: null, MainMenu: null, PageMenu: null, MenuPanel: null }}>
+          components={{ Toolbar: null, MainMenu: null, PageMenu: null, MenuPanel: null, StylePanel: null }}>
           <ActionsBridge />
           <DialogBridge />
         </Tldraw>
